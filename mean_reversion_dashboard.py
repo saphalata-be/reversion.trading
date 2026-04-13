@@ -84,47 +84,33 @@ VR_Q = 10
 
 def hurst_rs(prices: np.ndarray) -> float:
     """
-    Exposant de Hurst via analyse R/S sur les log-returns (plus robuste que sur
-    les log-prix qui sont non-stationnaires et biaiseraient H vers le haut).
-    H < 0.5 : returns anti-persistants (prix mean-reverting)
-    H = 0.5 : returns non-corrélés (marche aléatoire)
-    H > 0.5 : returns auto-corrélés positivement (tendance)
+    Exposant de Hurst via variance scaling sur les log-prix (approche Ernie Chan).
+    Mesure comment std(log(P[t+τ]) - log(P[t])) évolue avec τ :
+      std(τ) ∝ τ^H  →  H = pente de log(std) vs log(τ)
+
+    H < 0.5 : le PRIX lui-même est mean-reverting (std croît moins vite que √τ)
+    H = 0.5 : marche aléatoire (std ∝ √τ)
+    H > 0.5 : prix tendanciel (std croît plus vite que √τ)
     """
-    series = np.diff(np.log(prices))  # log-returns
-    n = len(series)
+    lp = np.log(prices)
+    n = len(lp)
     if n < 40:
         return np.nan
 
-    min_w = max(10, n // 30)
-    max_w = n // 4
-    if max_w <= min_w:
+    max_lag = min(n // 4, 200)
+    if max_lag < 4:
         return np.nan
 
-    windows = np.unique(np.geomspace(min_w, max_w, 20).astype(int))
-    results: list[tuple[int, float]] = []
+    lags = np.unique(np.geomspace(2, max_lag, 20).astype(int))
+    tau = np.array([np.std(lp[lag:] - lp[:-lag]) for lag in lags])
 
-    for w in windows:
-        n_sub = n // w
-        if n_sub < 2:
-            continue
-        rs_vals: list[float] = []
-        for i in range(n_sub):
-            sub = series[i * w : (i + 1) * w]
-            mu = sub.mean()
-            dev = np.cumsum(sub - mu)
-            R = dev.max() - dev.min()
-            S = sub.std(ddof=1)
-            if S > 0:
-                rs_vals.append(R / S)
-        if rs_vals:
-            results.append((w, np.mean(rs_vals)))
-
-    if len(results) < 3:
+    # Filtre les éventuels std nuls
+    valid = tau > 0
+    if valid.sum() < 3:
         return np.nan
 
-    ws, rs = zip(*results)
     try:
-        return float(np.polyfit(np.log(ws), np.log(rs), 1)[0])
+        return float(np.polyfit(np.log(lags[valid]), np.log(tau[valid]), 1)[0])
     except Exception:
         return np.nan
 
@@ -427,8 +413,9 @@ def render_dashboard(symbol: str, console: "Console") -> None:
 
     console.print(table)
     console.print(
-        "[dim]  Hurst<0.5=MR  HL court=MR  ADF p<0.05=stationnaire"
-        f"  VR<1=MR  OU theta eleve=MR  (VR sur q={VR_Q} periodes)[/dim]\n"
+        "[dim]  Hurst<0.5=prix MR (variance scaling log-prix)"
+        "  HL court=MR  ADF p<0.05=stationnaire"
+        f"  VR<1=MR  OU theta eleve=MR  (VR q={VR_Q})[/dim]\n"
     )
 
 
