@@ -3,13 +3,15 @@
 Mean Reversion Dashboard
 ========================
 Analyse statistique multi-timeframe pour le trading mean reversion.
+Un tableau par symbole et par timeframe (1D / H4 / H1).
+Colonnes : Historique complet | 10 ans | 5 ans | 1 an | 6 mois | 3 mois | Score
 
 Métriques calculées :
-  - Hurst Exponent     (R/S analysis sur log-prix)
+  - Hurst Exponent     (variance scaling sur log-prix, approche Ernie Chan)
   - Half-Life          (régression OU, converti en jours)
   - ADF p-value        (test racine unitaire sur log-prix)
   - Variance Ratio     (Lo-MacKinlay, q=10, sur log-returns)
-  - OU θ (speed)       (vitesse de retour à la moyenne, annualisée)
+  - OU theta (speed)   (vitesse de retour à la moyenne, annualisée)
 
 Usage :
   python mean_reversion_dashboard.py                 # tous les symboles
@@ -58,23 +60,38 @@ BARS_PER_YEAR: dict[str, float] = {
     "1H": 252.0 * 24,
 }
 
-# Définition des colonnes : (label_affichage, timeframe, jours_lookback)
-COLUMNS: list[tuple[str, str, int]] = [
-    ("Journ. 3 ans", "1D", 365 * 3),
-    ("Journ. 2 ans", "1D", 365 * 2),
-    ("Journ. 1 an",  "1D", 365),
-    ("H4  1 an",     "4H", 365),
-    ("H4  6 mois",   "4H", 183),
-    ("H1  1 an",     "1H", 365),
-    ("H1  6 mois",   "1H", 183),
+# Timeframes à analyser : (label_affichage, code_fichier)
+TIMEFRAMES: list[tuple[str, str]] = [
+    ("Journalier (1D)", "1D"),
+    ("4 Heures  (H4)",  "4H"),
+    ("1 Heure   (H1)",  "1H"),
 ]
 
+# Périodes à analyser : (label_affichage, jours_lookback | None = tout l'historique)
+PERIODS: list[tuple[str, int | None]] = [
+    ("Historique", None),
+    ("10 ans",     365 * 10),
+    ("5 ans",      365 * 5),
+    ("1 an",       365),
+    ("6 mois",     183),
+    ("3 mois",     91),
+]
+
+# Clés JSON stables pour chaque période et métrique
+PERIOD_KEYS:  list[str] = ["all_history", "10y", "5y", "1y", "6m", "3m"]
 METRIC_NAMES: list[str] = [
     "Hurst Exponent",
     "Half-Life (jours)",
     "ADF p-value",
     "Variance Ratio",
     "OU theta (speed)",
+]
+METRIC_KEYS: list[str] = [
+    "hurst",
+    "half_life_days",
+    "adf_pvalue",
+    "variance_ratio",
+    "ou_theta",
 ]
 
 # q pour le Variance Ratio
@@ -311,30 +328,63 @@ def _load_df(symbol: str, tf: str) -> pd.DataFrame | None:
     return _cache[key]
 
 
-def get_series(symbol: str, tf: str, days: int) -> np.ndarray | None:
-    """Charge et filtre les prix de clôture sur les `days` derniers jours."""
+def get_series(
+    symbol: str, tf: str, days: int | None
+) -> tuple[np.ndarray | None, dict | None]:
+    """
+    Charge les prix de clôture filtrés sur les `days` derniers jours.
+    Si days est None, retourne tout l'historique disponible.
+
+    Retourne (prices, meta) où meta = {"bars": N, "from": iso, "to": iso},
+    ou (None, None) si les données sont insuffisantes.
+    """
     df = _load_df(symbol, tf)
     if df is None:
-        return None
-    ref = df["Datetime"].iloc[-1]
-    cutoff = ref - pd.Timedelta(days=days)
-    arr = df.loc[df["Datetime"] >= cutoff, "Close"].dropna().values
-    return arr if len(arr) >= 40 else None
+        return None, None
+
+    if days is None:
+        sub = df
+    else:
+        ref = df["Datetime"].iloc[-1]
+        cutoff = ref - pd.Timedelta(days=days)
+        sub = df.loc[df["Datetime"] >= cutoff]
+
+    arr = sub["Close"].dropna().values
+    if len(arr) < 40:
+        return None, None
+
+    meta = {
+        "bars": int(len(arr)),
+        "from": sub["Datetime"].iloc[0].isoformat(),
+        "to":   sub["Datetime"].iloc[-1].isoformat(),
+    }
+    return arr, meta
 
 
-# ─── Calcul complet par symbole ────────────────────────────────────────────────
+# ─── Calcul par symbole × timeframe ───────────────────────────────────────────
 
-def compute_symbol(symbol: str) -> list[list[tuple[float, float]] | None]:
+def compute_timeframe(
+    symbol: str, tf: str
+) -> tuple[
+    list[list[tuple[float, float]] | None],
+    list[dict | None],
+]:
     """
-    Retourne data[col_idx][metric_idx] = (valeur, score)
-    ou None si les données sont absentes pour cette colonne.
-    """
-    data: list[list[tuple[float, float]] | None] = []
+    Pour un symbole et un timeframe donnés, calcule les 5 métriques sur
+    chacune des périodes définies dans PERIODS.
 
-    for _, tf, days in COLUMNS:
-        series = get_series(symbol, tf, days)
+    Retourne (data, metas) où :
+      data[i][m] = (valeur, score) pour la période i, métrique m
+      metas[i]   = {"bars": N, "from": iso, "to": iso} | None
+    """
+    data:  list[list[tuple[float, float]] | None] = []
+    metas: list[dict | None] = []
+
+    for _, days in PERIODS:
+        series, meta = get_series(symbol, tf, days)
         if series is None:
             data.append(None)
+            metas.append(None)
             continue
 
         vals = [
@@ -346,17 +396,32 @@ def compute_symbol(symbol: str) -> list[list[tuple[float, float]] | None]:
         ]
         col = [(v, score_metric(v, m)) for m, v in enumerate(vals)]
         data.append(col)
+        metas.append(meta)
 
-    return data
+    return data, metas
 
 
 # ─── Rendu Rich ────────────────────────────────────────────────────────────────
 
-def render_dashboard(symbol: str, console: "Console") -> None:
-    data = compute_symbol(symbol)
+_LEGEND = (
+    "[dim]  Hurst<0.5=prix MR (variance scaling log-prix)"
+    "  HL court=MR  ADF p<0.05=stationnaire"
+    f"  VR<1=MR  OU theta eleve=MR  (VR q={VR_Q})[/dim]"
+)
+
+
+def _build_tf_table(
+    symbol: str,
+    tf_label: str,
+    data: list[list[tuple[float, float]] | None],
+) -> "Table":
+    """Construit un tableau Rich pour un symbole + timeframe donné."""
 
     table = Table(
-        title=f"[bold cyan]Mean Reversion Dashboard — [white]{symbol}[/white][/bold cyan]",
+        title=(
+            f"[bold cyan]{symbol}[/bold cyan]"
+            f"  [bold white]{tf_label}[/bold white]"
+        ),
         box=box.ROUNDED,
         header_style="bold bright_blue",
         show_lines=True,
@@ -364,11 +429,11 @@ def render_dashboard(symbol: str, console: "Console") -> None:
         expand=False,
     )
 
-    # En-têtes
+    # ── En-têtes ──────────────────────────────────────────────────────────────
     table.add_column("Métrique", style="bold white", min_width=19, no_wrap=True)
-    for lbl, _, _ in COLUMNS:
-        table.add_column(lbl, justify="right", min_width=12, no_wrap=True)
-    table.add_column("Éval. Générale", justify="center", min_width=16, style="bold")
+    for lbl, _ in PERIODS:
+        table.add_column(lbl, justify="right", min_width=11, no_wrap=True)
+    table.add_column("Score", justify="center", min_width=16, style="bold")
 
     # ── Lignes métriques ──────────────────────────────────────────────────────
     for m_idx, name in enumerate(METRIC_NAMES):
@@ -408,15 +473,29 @@ def render_dashboard(symbol: str, console: "Console") -> None:
 
     overall = float(np.mean(col_avgs)) if col_avgs else 0.0
     global_row.append(_fmt_eval(overall))
-
     table.add_row(*global_row)
 
-    console.print(table)
-    console.print(
-        "[dim]  Hurst<0.5=prix MR (variance scaling log-prix)"
-        "  HL court=MR  ADF p<0.05=stationnaire"
-        f"  VR<1=MR  OU theta eleve=MR  (VR q={VR_Q})[/dim]\n"
-    )
+    return table
+
+
+def render_dashboard(symbol: str, console: "Console") -> None:
+    """Affiche un tableau par timeframe pour le symbole donné."""
+    any_printed = False
+
+    for tf_label, tf in TIMEFRAMES:
+        data, _metas = compute_timeframe(symbol, tf)
+
+        # Ignorer silencieusement les TF sans aucune donnée
+        if all(col is None for col in data):
+            continue
+
+        table = _build_tf_table(symbol, tf_label, data)
+        console.print(table)
+        any_printed = True
+
+    if any_printed:
+        console.print(_LEGEND)
+    console.print()
 
 
 # ─── Export HTML ──────────────────────────────────────────────────────────────
@@ -428,6 +507,158 @@ def export_html(symbol: str, path: str) -> None:
     render_dashboard(symbol, html_console)
     html_console.save_html(path)
     print(f"  → Export HTML : {path}")
+
+
+# ─── Export JSON ──────────────────────────────────────────────────────────────
+
+import json
+from datetime import datetime, timezone
+
+
+def _to_json_val(v: float) -> float | None:
+    """Convertit NaN/Inf en null JSON, arrondit les floats valides."""
+    return None if not np.isfinite(v) else round(float(v), 6)
+
+
+def build_symbol_dict(symbol: str) -> dict:
+    """
+    Calcule toutes les métriques pour un symbole et retourne un dict
+    prêt à sérialiser en JSON.
+
+    Structure :
+      symbol, generated_at, overall_score,
+      timeframes → {tf_key: {label, score, periods → {period_key: {
+          label, bars, from, to, score, metrics → {metric_key: {value, score}}
+      }}}}
+    """
+    generated_at = datetime.now(timezone.utc).isoformat()
+
+    tf_scores: list[float] = []
+    timeframes_out: dict = {}
+
+    for tf_label, tf in TIMEFRAMES:
+        data, metas = compute_timeframe(symbol, tf)
+
+        if all(col is None for col in data):
+            continue  # TF sans données (ex. XAUUSD sans 1D)
+
+        periods_out: dict = {}
+        period_scores: list[float] = []
+
+        for p_idx, ((p_label, _days), p_key) in enumerate(zip(PERIODS, PERIOD_KEYS)):
+            col  = data[p_idx]
+            meta = metas[p_idx]
+
+            if col is None:
+                periods_out[p_key] = None
+                continue
+
+            metrics_out: dict = {}
+            m_scores: list[float] = []
+
+            for m_idx, (m_key, m_name) in enumerate(zip(METRIC_KEYS, METRIC_NAMES)):
+                v, sc = col[m_idx]
+                metrics_out[m_key] = {
+                    "label": m_name,
+                    "value": _to_json_val(v),
+                    "score": round(sc, 2),
+                }
+                m_scores.append(sc)
+
+            p_score = round(float(np.mean(m_scores)), 2) if m_scores else None
+            period_scores.append(p_score or 0.0)
+
+            periods_out[p_key] = {
+                "label": p_label,
+                "bars":  meta["bars"],
+                "from":  meta["from"],
+                "to":    meta["to"],
+                "score": p_score,
+                "metrics": metrics_out,
+            }
+
+        tf_score = round(float(np.mean(period_scores)), 2) if period_scores else None
+        if tf_score is not None:
+            tf_scores.append(tf_score)
+
+        timeframes_out[tf] = {
+            "label":   tf_label,
+            "score":   tf_score,
+            "periods": periods_out,
+        }
+
+    overall = round(float(np.mean(tf_scores)), 2) if tf_scores else None
+
+    return {
+        "symbol":       symbol,
+        "generated_at": generated_at,
+        "overall_score": overall,
+        "timeframes":   timeframes_out,
+    }
+
+
+def save_json_output(symbols: list[str], output_dir: str) -> None:
+    """
+    Génère les fichiers JSON dans output_dir :
+      index.json            — métadonnées globales + résumé par symbole
+      symbols/{SYMBOL}.json — détail complet par symbole
+
+    Le répertoire symbols/ est créé si nécessaire.
+    """
+    symbols_dir = os.path.join(output_dir, "symbols")
+    os.makedirs(symbols_dir, exist_ok=True)
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    index_symbols: list[dict] = []
+
+    for sym in symbols:
+        sym_dict = build_symbol_dict(sym)
+
+        # Fichier par symbole
+        sym_path = os.path.join(symbols_dir, f"{sym}.json")
+        with open(sym_path, "w", encoding="utf-8") as f:
+            json.dump(sym_dict, f, ensure_ascii=False, indent=2)
+
+        # Résumé pour l'index (scores par TF, sans le détail des métriques)
+        tf_scores = {
+            tf: sym_dict["timeframes"][tf]["score"]
+            for tf in sym_dict["timeframes"]
+        }
+        index_symbols.append({
+            "symbol":            sym,
+            "overall_score":     sym_dict["overall_score"],
+            "timeframe_scores":  tf_scores,
+            "file":              f"symbols/{sym}.json",
+        })
+
+        print(f"  ✓  {sym:<18}  score={sym_dict['overall_score']}  → {sym_path}")
+
+    # Fichier index
+    index = {
+        "generated_at": generated_at,
+        "config": {
+            "vr_q":     VR_Q,
+            "min_bars": 40,
+        },
+        "schema": {
+            "timeframes": [
+                {"key": tf, "label": lbl} for lbl, tf in TIMEFRAMES
+            ],
+            "periods": [
+                {"key": k, "label": lbl} for (lbl, _), k in zip(PERIODS, PERIOD_KEYS)
+            ],
+            "metrics": [
+                {"key": k, "label": lbl} for k, lbl in zip(METRIC_KEYS, METRIC_NAMES)
+            ],
+        },
+        "symbols": index_symbols,
+    }
+
+    index_path = os.path.join(output_dir, "index.json")
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump(index, f, ensure_ascii=False, indent=2)
+
+    print(f"\n  index.json → {index_path}  ({len(symbols)} symboles)")
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────────
@@ -466,6 +697,19 @@ def main() -> None:
         metavar="FICHIER.html",
         help="Exporter le tableau en HTML (valide pour un seul symbole à la fois).",
     )
+    ap.add_argument(
+        "--json-dir", "-j",
+        metavar="RÉPERTOIRE",
+        help=(
+            "Répertoire de sortie JSON. Génère index.json + symbols/{SYM}.json. "
+            "Peut être combiné avec --quiet pour désactiver l'affichage console."
+        ),
+    )
+    ap.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="Supprime l'affichage console (utile avec --json-dir en production).",
+    )
     args = ap.parse_args()
 
     if not os.path.isdir(HISTORY_DIR):
@@ -497,6 +741,15 @@ def main() -> None:
     if not HAS_RICH:
         print("Installez rich : pip install rich statsmodels")
         sys.exit(1)
+
+    # ── Export JSON ───────────────────────────────────────────────────────────
+    if args.json_dir:
+        print(f"Export JSON → {args.json_dir}  ({len(symbols)} symboles)\n")
+        save_json_output(symbols, args.json_dir)
+
+    # ── Affichage console ─────────────────────────────────────────────────────
+    if args.quiet:
+        return
 
     console = Console(force_terminal=True, legacy_windows=False)
 
