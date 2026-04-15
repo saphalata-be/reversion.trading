@@ -160,7 +160,7 @@ def half_life(prices: np.ndarray, tf: str) -> float:
     return float(hl_days) if 0 < hl_days < 50_000 else np.nan
 
 
-def adf_pvalue(prices: np.ndarray) -> float:
+def adf_pvalue(prices: np.ndarray, maxlag: int | None = None) -> float:
     """
     ADF p-value sur les log-prix.
     p < 0.05 : série stationnaire (mean-reverting)
@@ -169,7 +169,10 @@ def adf_pvalue(prices: np.ndarray) -> float:
     if len(lp) < 20:
         return np.nan
     try:
-        return float(adfuller(lp, autolag="AIC")[1])
+        kw = {"autolag": "AIC"}
+        if maxlag is not None:
+            kw["maxlag"] = maxlag
+        return float(adfuller(lp, **kw)[1])
     except Exception:
         return np.nan
 
@@ -188,7 +191,10 @@ def variance_ratio(prices: np.ndarray, q: int = VR_Q) -> float:
     if v1 == 0:
         return np.nan
 
-    rq = np.array([r[i : i + q].sum() for i in range(n - q + 1)])
+    # Somme glissante vectorisée via cumsum (O(n), beaucoup plus rapide que boucle Python)
+    cs = np.zeros(n + 1)
+    np.cumsum(r, out=cs[1:])
+    rq = cs[q:] - cs[:-q]
     vq = np.var(rq, ddof=1)
 
     return float(vq / (q * v1))
@@ -405,13 +411,59 @@ def compute_timeframe(
     return data, metas
 
 
-# ─── Historique hebdomadaire des scores ───────────────────────────────────────
+# ─── Historique des scores par période ────────────────────────────────────────
 
-def compute_weekly_score_history(symbol: str, tf: str) -> dict:
+# Jours de lookback par clé de période (None = fenêtre croissante depuis l'origine)
+PERIOD_HISTORY_DAYS: dict[str, int | None] = {
+    "all_history": None,
+    "10y": 365 * 10,
+    "5y":  365 * 5,
+    "1y":  365,
+    "6m":  183,
+    "3m":  91,
+}
+
+# Nombre max de points de sortie par période (step adaptatif pour éviter des calculs trop longs)
+_MAX_PTS: dict[str, int] = {
+    "all_history": 100,
+    "10y":         150,
+    "5y":          200,
+    "1y":          500,
+    "6m":          500,
+    "3m":          500,
+}
+
+# Tailles max pour les métriques lentes dans l'historique
+_ADF_MAX_BARS   = 3000   # sous-échantillonnage pour ADF (stationnarité préservée)
+_HURST_MAX_BARS = 5000   # sous-échantillonnage pour Hurst (H est invariant d'échelle)
+
+
+def _subsample(arr: np.ndarray, max_bars: int) -> np.ndarray:
+    """Sous-échantillonne arr à max_bars points équidistants."""
+    if len(arr) <= max_bars:
+        return arr
+    idx = np.round(np.linspace(0, len(arr) - 1, max_bars)).astype(int)
+    return arr[idx]
+
+
+def compute_period_score_history(symbol: str, tf: str) -> dict:
     """
-    Calcule l'évolution du score semaine par semaine via une fenêtre glissante
-    d'1 an (HISTORY_WINDOW_BARS).  Retourne un dict :
-      {"dates": [...], "overall": [...], "hurst": [...], ...}
+    Calcule l'évolution du score global (overall) semaine par semaine pour
+    chacune des périodes définies dans PERIOD_HISTORY_DAYS.
+
+    - "all_history" : fenêtre croissante depuis le début de l'historique.
+    - Autres périodes : fenêtre glissante de taille fixe.
+
+    Seul le score global (moyenne des 5 métriques) est retenu.
+    Les métriques lentes (ADF, Hurst) sont calculées sur une version
+    sous-échantillonnée pour maintenir des temps de calcul raisonnables.
+
+    Retourne un dict :
+      {
+        "all_history": {"dates": [...], "overall": [...]},
+        "10y":         {"dates": [...], "overall": [...]},
+        ...
+      }
     ou {} si les données sont insuffisantes.
     """
     df = _load_df(symbol, tf)
@@ -422,47 +474,53 @@ def compute_weekly_score_history(symbol: str, tf: str) -> dict:
     dates_all  = df["Datetime"].values
     n = len(prices_all)
 
-    window   = HISTORY_WINDOW_BARS.get(tf, 252)
-    step     = HISTORY_STEP_BARS.get(tf, 5)
-    min_bars = 40
+    base_step = HISTORY_STEP_BARS.get(tf, 5)
+    min_bars  = 40
 
     if n < min_bars:
         return {}
 
-    dates_out:  list[str]         = []
-    metric_acc: dict[str, list]   = {k: [] for k in METRIC_KEYS}
-    overall_out: list[float]      = []
+    result: dict = {}
 
-    for end_idx in range(min_bars, n + 1, step):
-        start_idx = max(0, end_idx - window)
-        prices = prices_all[start_idx:end_idx]
-        if len(prices) < min_bars:
-            continue
+    for p_key, days in PERIOD_HISTORY_DAYS.items():
+        window_bars    = None if days is None else int(days * BARS_PER_DAY[tf])
+        max_pts        = _MAX_PTS.get(p_key, 500)
+        effective_step = max(base_step, n // max_pts)
 
-        date_str = str(pd.Timestamp(dates_all[end_idx - 1]).date())
+        dates_out:   list[str]   = []
+        overall_out: list[float] = []
 
-        vals = [
-            hurst_rs(prices),
-            half_life(prices, tf),
-            adf_pvalue(prices),
-            variance_ratio(prices),
-            ou_theta(prices, tf),
-        ]
-        m_scores = [score_metric(v, i) for i, v in enumerate(vals)]
+        for end_idx in range(min_bars, n + 1, effective_step):
+            start_idx = 0 if window_bars is None else max(0, end_idx - window_bars)
+            prices = prices_all[start_idx:end_idx]
+            if len(prices) < min_bars:
+                continue
 
-        dates_out.append(date_str)
-        for mk, sc in zip(METRIC_KEYS, m_scores):
-            metric_acc[mk].append(int(sc))          # scores entiers 0-10
-        overall_out.append(round(float(np.mean(m_scores)), 2))
+            date_str = str(pd.Timestamp(dates_all[end_idx - 1]).date())
 
-    if not dates_out:
-        return {}
+            # Métriques lentes : sous-échantillonnage pour la performance
+            p_adf   = _subsample(prices, _ADF_MAX_BARS)
+            p_hurst = _subsample(prices, _HURST_MAX_BARS)
 
-    return {
-        "dates":   dates_out,
-        "overall": overall_out,
-        **metric_acc,
-    }
+            vals = [
+                hurst_rs(p_hurst),
+                half_life(prices, tf),
+                adf_pvalue(p_adf, maxlag=10),   # maxlag limité pour la performance
+                variance_ratio(prices),
+                ou_theta(prices, tf),
+            ]
+            m_scores = [score_metric(v, i) for i, v in enumerate(vals)]
+
+            dates_out.append(date_str)
+            overall_out.append(round(float(np.mean(m_scores)), 2))
+
+        if dates_out:
+            result[p_key] = {
+                "dates":   dates_out,
+                "overall": overall_out,
+            }
+
+    return result
 
 
 # ─── Rendu Rich ────────────────────────────────────────────────────────────────
@@ -653,20 +711,20 @@ def build_symbol_dict(symbol: str) -> dict:
 
     overall = round(float(np.mean(tf_scores)), 2) if tf_scores else None
 
-    # ── Historique hebdomadaire des scores (fenêtre glissante 1 an) ──────────
-    weekly_scores_out: dict = {}
+    # ── Historique des scores par période (fenêtre glissante par période) ─────
+    period_history_out: dict = {}
     for _, tf in TIMEFRAMES:
         if tf in timeframes_out:   # seulement les TF qui ont des données
-            wh = compute_weekly_score_history(symbol, tf)
-            if wh:
-                weekly_scores_out[tf] = wh
+            ph = compute_period_score_history(symbol, tf)
+            if ph:
+                period_history_out[tf] = ph
 
     return {
-        "symbol":        symbol,
-        "generated_at":  generated_at,
-        "overall_score": overall,
-        "timeframes":    timeframes_out,
-        "weekly_scores": weekly_scores_out,
+        "symbol":         symbol,
+        "generated_at":   generated_at,
+        "overall_score":  overall,
+        "timeframes":     timeframes_out,
+        "period_history": period_history_out,
     }
 
 

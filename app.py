@@ -550,12 +550,7 @@ SYMBOL_TEMPLATE = """<!DOCTYPE html>
             {% endfor %}
             <td>
               {% if m.avg is not none %}
-                <button type="button"
-                        class="badge score-btn {{ m.avg_cls }}"
-                        data-history-tf="{{ tf.key }}"
-                        data-history-metric="{{ m.key }}"
-                        data-history-title="{{ symbol }} \u2014 {{ tf.label_long }} \u2014 {{ m.label }}"
-                        title="Voir l\u2019\u00e9volution historique">{{ "%.1f"|format(m.avg) }}</button>
+                <span class="badge {{ m.avg_cls }}">{{ "%.1f"|format(m.avg) }}</span>
               {% else %}
                 <span style="color:#8b949e">—</span>
               {% endif %}
@@ -569,7 +564,13 @@ SYMBOL_TEMPLATE = """<!DOCTYPE html>
             {% for p in tf.periods %}
             <td>
               {% if p.score is not none %}
-                <span class="badge {{ p.score_cls }}">{{ "%.1f"|format(p.score) }}</span>
+                <button type="button"
+                        class="badge score-btn {{ p.score_cls }}"
+                        data-history-tf="{{ tf.key }}"
+                        data-history-period="{{ p.key }}"
+                        data-history-period-label="{{ p.label }}"
+                        data-history-title="{{ symbol }} \u2014 {{ tf.label_long }} \u2014 {{ p.label }}"
+                        title="Voir l\u2019\u00e9volution du score sur {{ p.label }}">{{ "%.1f"|format(p.score) }}</button>
               {% else %}
                 <span style="color:#8b949e">—</span>
               {% endif %}
@@ -577,12 +578,7 @@ SYMBOL_TEMPLATE = """<!DOCTYPE html>
             {% endfor %}
             <td>
               {% if tf.score is not none %}
-                <button type="button"
-                        class="badge score-btn {{ tf.score_cls }}"
-                        data-history-tf="{{ tf.key }}"
-                        data-history-metric="overall"
-                        data-history-title="{{ symbol }} \u2014 {{ tf.label_long }} \u2014 Score Global"
-                        title="Voir l\u2019\u00e9volution historique">{{ "%.1f"|format(tf.score) }}</button>
+                <span class="badge {{ tf.score_cls }}">{{ "%.1f"|format(tf.score) }}</span>
               {% else %}
                 <span style="color:#8b949e">—</span>
               {% endif %}
@@ -622,7 +618,7 @@ SYMBOL_TEMPLATE = """<!DOCTYPE html>
     <div class="modal-header">
       <div>
         <h3 id="history-title"></h3>
-        <div class="modal-subtitle">Fen\u00eatre glissante 1&nbsp;an &middot; Pas hebdomadaire</div>
+        <div class="modal-subtitle" id="history-subtitle"></div>
       </div>
       <button class="modal-close" id="modal-close-btn" title="Fermer (Esc)">\u2715</button>
     </div>
@@ -641,7 +637,7 @@ function showTab(key, btn) {
 }
 
 // ── History chart ─────────────────────────────────────────────────────────────
-const _weeklyData = {{ weekly_scores | tojson }};
+const _periodHistory = {{ period_history | tojson }};
 let _chartInst = null;
 
 const _SCORE_COLORS = [
@@ -651,20 +647,25 @@ const _SCORE_COLORS = [
   { y: 3.0, color: 'rgba(255,167,38,.35)',  label: 'Faible' },
 ];
 
-function showScoreHistory(tf, metric, title) {
-  const tfData = _weeklyData[tf];
-  if (!tfData || !tfData[metric] || !tfData.dates || !tfData.dates.length) {
+function showScoreHistory(tf, period, periodLabel, title) {
+  const tfData = _periodHistory[tf];
+  if (!tfData || !tfData[period] || !tfData[period].dates || !tfData[period].dates.length) {
     alert('Aucune donn\u00e9e historique disponible. Relancez le calcul avec mean_reversion_dashboard.py.');
     return;
   }
 
+  const periodData = tfData[period];
   document.getElementById('history-title').textContent = title;
+  const subtitle = period === 'all_history'
+    ? 'Fen\u00eatre croissante (tout l\u2019historique) \u00b7 Pas hebdomadaire'
+    : 'Fen\u00eatre glissante ' + periodLabel + ' \u00b7 Pas hebdomadaire';
+  document.getElementById('history-subtitle').textContent = subtitle;
   document.getElementById('history-modal').classList.add('open');
 
   if (_chartInst) { _chartInst.destroy(); _chartInst = null; }
 
   const refDatasets = _SCORE_COLORS.map(r => ({
-    data: tfData.dates.map(() => r.y),
+    data: periodData.dates.map(() => r.y),
     borderColor: r.color,
     borderWidth: 1,
     borderDash: [5, 4],
@@ -678,11 +679,11 @@ function showScoreHistory(tf, metric, title) {
   _chartInst = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: tfData.dates,
+      labels: periodData.dates,
       datasets: [
         {
           label: 'Score',
-          data: tfData[metric],
+          data: periodData.overall,
           borderColor: '#58a6ff',
           backgroundColor: 'rgba(88,166,255,.08)',
           borderWidth: 1.8,
@@ -733,12 +734,13 @@ function closeScoreHistory() {
 }
 
 document.addEventListener('click', function(e) {
-  const btn = e.target.closest('[data-history-tf]');
+  const btn = e.target.closest('[data-history-period]');
   if (!btn) return;
 
   showScoreHistory(
     btn.dataset.historyTf,
-    btn.dataset.historyMetric,
+    btn.dataset.historyPeriod,
+    btn.dataset.historyPeriodLabel,
     btn.dataset.historyTitle,
   );
 });
@@ -890,7 +892,7 @@ def symbol_detail(symbol):
         cat=_categorize(symbol),
         generated_at=generated_at,
         timeframes=timeframes,
-        weekly_scores=data.get("weekly_scores", {}),
+        period_history=data.get("period_history", {}),
     )
 
 
