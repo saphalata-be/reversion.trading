@@ -255,6 +255,65 @@ th.sort-desc::after { content: " ↓"; color: #58a6ff; }
     color: #8b949e;
     line-height: 2;
 }
+
+/* ── Clickable score button (detail page) ── */
+.score-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    font: inherit;
+    line-height: inherit;
+}
+.score-btn:hover {
+    filter: brightness(1.3);
+    box-shadow: 0 0 8px currentColor;
+}
+.score-btn::after {
+    content: " \2197";
+    font-size: 0.68rem;
+    opacity: 0.55;
+}
+
+/* ── History modal ── */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.78);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal-box {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 22px 24px 18px;
+    width: min(960px, 92vw);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+.modal-header h3 { font-size: 0.95rem; color: #c9d1d9; font-weight: 600; }
+.modal-subtitle { font-size: 0.72rem; color: #8b949e; margin-top: 3px; }
+.modal-close {
+    background: none;
+    border: none;
+    color: #8b949e;
+    font-size: 1.1rem;
+    cursor: pointer;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+.modal-close:hover { background: #21262d; color: #c9d1d9; }
+.chart-wrap { position: relative; height: 350px; }
 """
 
 
@@ -419,6 +478,7 @@ SYMBOL_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ symbol }} — Mean Reversion</title>
 <style>{{ css }}</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -490,7 +550,12 @@ SYMBOL_TEMPLATE = """<!DOCTYPE html>
             {% endfor %}
             <td>
               {% if m.avg is not none %}
-                <span class="badge {{ m.avg_cls }}">{{ "%.1f"|format(m.avg) }}</span>
+                <button type="button"
+                        class="badge score-btn {{ m.avg_cls }}"
+                        data-history-tf="{{ tf.key }}"
+                        data-history-metric="{{ m.key }}"
+                        data-history-title="{{ symbol }} \u2014 {{ tf.label_long }} \u2014 {{ m.label }}"
+                        title="Voir l\u2019\u00e9volution historique">{{ "%.1f"|format(m.avg) }}</button>
               {% else %}
                 <span style="color:#8b949e">—</span>
               {% endif %}
@@ -512,7 +577,12 @@ SYMBOL_TEMPLATE = """<!DOCTYPE html>
             {% endfor %}
             <td>
               {% if tf.score is not none %}
-                <span class="badge {{ tf.score_cls }}">{{ "%.1f"|format(tf.score) }}</span>
+                <button type="button"
+                        class="badge score-btn {{ tf.score_cls }}"
+                        data-history-tf="{{ tf.key }}"
+                        data-history-metric="overall"
+                        data-history-title="{{ symbol }} \u2014 {{ tf.label_long }} \u2014 Score Global"
+                        title="Voir l\u2019\u00e9volution historique">{{ "%.1f"|format(tf.score) }}</button>
               {% else %}
                 <span style="color:#8b949e">—</span>
               {% endif %}
@@ -546,6 +616,22 @@ SYMBOL_TEMPLATE = """<!DOCTYPE html>
   </div>
 </div>
 
+<!-- History modal -->
+<div class="modal-overlay" id="history-modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div>
+        <h3 id="history-title"></h3>
+        <div class="modal-subtitle">Fen\u00eatre glissante 1&nbsp;an &middot; Pas hebdomadaire</div>
+      </div>
+      <button class="modal-close" id="modal-close-btn" title="Fermer (Esc)">\u2715</button>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="history-chart"></canvas>
+    </div>
+  </div>
+</div>
+
 <script>
 function showTab(key, btn) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
@@ -553,6 +639,115 @@ function showTab(key, btn) {
   document.getElementById('tab-' + key).classList.add('active');
   btn.classList.add('active');
 }
+
+// ── History chart ─────────────────────────────────────────────────────────────
+const _weeklyData = {{ weekly_scores | tojson }};
+let _chartInst = null;
+
+const _SCORE_COLORS = [
+  { y: 7.5, color: 'rgba(0,230,118,.35)',   label: 'Fort MR' },
+  { y: 6.0, color: 'rgba(102,187,106,.35)', label: 'Bon MR' },
+  { y: 4.5, color: 'rgba(255,215,64,.35)',  label: 'Mod\u00e9r\u00e9' },
+  { y: 3.0, color: 'rgba(255,167,38,.35)',  label: 'Faible' },
+];
+
+function showScoreHistory(tf, metric, title) {
+  const tfData = _weeklyData[tf];
+  if (!tfData || !tfData[metric] || !tfData.dates || !tfData.dates.length) {
+    alert('Aucune donn\u00e9e historique disponible. Relancez le calcul avec mean_reversion_dashboard.py.');
+    return;
+  }
+
+  document.getElementById('history-title').textContent = title;
+  document.getElementById('history-modal').classList.add('open');
+
+  if (_chartInst) { _chartInst.destroy(); _chartInst = null; }
+
+  const refDatasets = _SCORE_COLORS.map(r => ({
+    data: tfData.dates.map(() => r.y),
+    borderColor: r.color,
+    borderWidth: 1,
+    borderDash: [5, 4],
+    pointRadius: 0,
+    fill: false,
+    label: r.label,
+    tooltip: false,
+  }));
+
+  const ctx = document.getElementById('history-chart').getContext('2d');
+  _chartInst = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: tfData.dates,
+      datasets: [
+        {
+          label: 'Score',
+          data: tfData[metric],
+          borderColor: '#58a6ff',
+          backgroundColor: 'rgba(88,166,255,.08)',
+          borderWidth: 1.8,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.25,
+          order: 0,
+        },
+        ...refDatasets,
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      scales: {
+        y: {
+          min: 0, max: 10,
+          ticks: { color: '#8b949e', stepSize: 1 },
+          grid: { color: 'rgba(48,54,61,.8)' },
+        },
+        x: {
+          ticks: { color: '#8b949e', maxTicksLimit: 14, maxRotation: 0 },
+          grid: { color: 'rgba(48,54,61,.5)' },
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          filter: item => item.datasetIndex === 0,
+          backgroundColor: '#21262d',
+          borderColor: '#30363d',
+          borderWidth: 1,
+          titleColor: '#8b949e',
+          bodyColor: '#c9d1d9',
+          callbacks: {
+            label: ctx => ' Score : ' + ctx.parsed.y.toFixed(2) + ' / 10'
+          }
+        }
+      }
+    }
+  });
+}
+
+function closeScoreHistory() {
+  document.getElementById('history-modal').classList.remove('open');
+  if (_chartInst) { _chartInst.destroy(); _chartInst = null; }
+}
+
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('[data-history-tf]');
+  if (!btn) return;
+
+  showScoreHistory(
+    btn.dataset.historyTf,
+    btn.dataset.historyMetric,
+    btn.dataset.historyTitle,
+  );
+});
+
+document.getElementById('modal-close-btn').addEventListener('click', closeScoreHistory);
+document.getElementById('history-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeScoreHistory();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeScoreHistory(); });
 </script>
 </body>
 </html>"""
@@ -695,18 +890,40 @@ def symbol_detail(symbol):
         cat=_categorize(symbol),
         generated_at=generated_at,
         timeframes=timeframes,
+        weekly_scores=data.get("weekly_scores", {}),
     )
 
 
 # ─── Lancement ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import socket
+    import sys
     import threading
     import webbrowser
 
+    host = "0.0.0.0"
+    port = 5000
+
+    def _port_is_available(bind_host: str, bind_port: int) -> bool:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind((bind_host, bind_port))
+        except OSError:
+            return False
+        return True
+
     def _open():
-        webbrowser.open("http://localhost:5000")
+        webbrowser.open(f"http://localhost:{port}")
+
+    if not _port_is_available(host, port):
+        print(
+            f"[ERROR] Le port {port} est deja utilise. "
+            "Fermez l'ancien serveur Flask avant de relancer app.py.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     threading.Timer(1.0, _open).start()
-    print("Mean Reversion Dashboard -> http://localhost:5000")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    print(f"Mean Reversion Dashboard -> http://localhost:{port}")
+    app.run(host=host, port=port, debug=False)

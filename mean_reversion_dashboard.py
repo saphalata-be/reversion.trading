@@ -97,6 +97,10 @@ METRIC_KEYS: list[str] = [
 # q pour le Variance Ratio
 VR_Q = 10
 
+# Fenêtre glissante (1 an) et pas hebdomadaire pour l'historique de scores
+HISTORY_WINDOW_BARS: dict[str, int] = {"1D": 252,  "4H": 1512,  "1H": 6048}
+HISTORY_STEP_BARS:   dict[str, int] = {"1D": 5,    "4H": 30,    "1H": 120}
+
 # ─── Calcul des métriques ──────────────────────────────────────────────────────
 
 def hurst_rs(prices: np.ndarray) -> float:
@@ -401,6 +405,66 @@ def compute_timeframe(
     return data, metas
 
 
+# ─── Historique hebdomadaire des scores ───────────────────────────────────────
+
+def compute_weekly_score_history(symbol: str, tf: str) -> dict:
+    """
+    Calcule l'évolution du score semaine par semaine via une fenêtre glissante
+    d'1 an (HISTORY_WINDOW_BARS).  Retourne un dict :
+      {"dates": [...], "overall": [...], "hurst": [...], ...}
+    ou {} si les données sont insuffisantes.
+    """
+    df = _load_df(symbol, tf)
+    if df is None:
+        return {}
+
+    prices_all = df["Close"].dropna().values
+    dates_all  = df["Datetime"].values
+    n = len(prices_all)
+
+    window   = HISTORY_WINDOW_BARS.get(tf, 252)
+    step     = HISTORY_STEP_BARS.get(tf, 5)
+    min_bars = 40
+
+    if n < min_bars:
+        return {}
+
+    dates_out:  list[str]         = []
+    metric_acc: dict[str, list]   = {k: [] for k in METRIC_KEYS}
+    overall_out: list[float]      = []
+
+    for end_idx in range(min_bars, n + 1, step):
+        start_idx = max(0, end_idx - window)
+        prices = prices_all[start_idx:end_idx]
+        if len(prices) < min_bars:
+            continue
+
+        date_str = str(pd.Timestamp(dates_all[end_idx - 1]).date())
+
+        vals = [
+            hurst_rs(prices),
+            half_life(prices, tf),
+            adf_pvalue(prices),
+            variance_ratio(prices),
+            ou_theta(prices, tf),
+        ]
+        m_scores = [score_metric(v, i) for i, v in enumerate(vals)]
+
+        dates_out.append(date_str)
+        for mk, sc in zip(METRIC_KEYS, m_scores):
+            metric_acc[mk].append(int(sc))          # scores entiers 0-10
+        overall_out.append(round(float(np.mean(m_scores)), 2))
+
+    if not dates_out:
+        return {}
+
+    return {
+        "dates":   dates_out,
+        "overall": overall_out,
+        **metric_acc,
+    }
+
+
 # ─── Rendu Rich ────────────────────────────────────────────────────────────────
 
 _LEGEND = (
@@ -589,11 +653,20 @@ def build_symbol_dict(symbol: str) -> dict:
 
     overall = round(float(np.mean(tf_scores)), 2) if tf_scores else None
 
+    # ── Historique hebdomadaire des scores (fenêtre glissante 1 an) ──────────
+    weekly_scores_out: dict = {}
+    for _, tf in TIMEFRAMES:
+        if tf in timeframes_out:   # seulement les TF qui ont des données
+            wh = compute_weekly_score_history(symbol, tf)
+            if wh:
+                weekly_scores_out[tf] = wh
+
     return {
-        "symbol":       symbol,
-        "generated_at": generated_at,
+        "symbol":        symbol,
+        "generated_at":  generated_at,
         "overall_score": overall,
-        "timeframes":   timeframes_out,
+        "timeframes":    timeframes_out,
+        "weekly_scores": weekly_scores_out,
     }
 
 
