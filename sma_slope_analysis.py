@@ -91,43 +91,70 @@ def compute_sma_crossings(close: pd.Series, period: int, min_bars: int = 3) -> i
 
 
 def compute_crossing_excursions(df: pd.DataFrame, period: int, min_bars: int = 3) -> list:
-    """Retourne la liste des excursions (%) de chaque croisement valide.
+    """Retourne la liste des excursions max close-based (%) de chaque run valide.
 
-    Pour chaque croisement (run précédent >= min_bars), calcule :
-      (high - sma) / sma * 100  si au-dessus
-      (sma - low)  / sma * 100  si en-dessous
+    Pour chaque run d'au moins `min_bars` bougies d'un même côté de la SMA,
+    on enregistre l'excursion maximale :
+        abs(close - sma) / sma * 100
     """
-    sma = df["Close"].rolling(window=period).mean()
-    valid_mask = sma.notna()
+    close_arr = df["Close"].astype(float).values
+    sma_arr = pd.Series(close_arr).rolling(window=period).mean().values
 
-    close_v = df.loc[valid_mask, "Close"].values
-    high_v  = df.loc[valid_mask, "High"].values
-    low_v   = df.loc[valid_mask, "Low"].values
-    sma_v   = sma[valid_mask].values
+    valid_mask = ~np.isnan(sma_arr)
+    if not valid_mask.any():
+        return []
 
-    pos_v = np.sign(close_v - sma_v).astype(int)
+    first_valid = int(np.argmax(valid_mask))
 
-    # Supprime les barres où close == sma exactement
-    nonzero = pos_v != 0
-    pos_v  = pos_v[nonzero]
-    high_v = high_v[nonzero]
-    low_v  = low_v[nonzero]
-    sma_v  = sma_v[nonzero]
+    raw_sign = np.zeros(len(df), dtype=int)
+    diff = close_arr[valid_mask] - sma_arr[valid_mask]
+    raw_sign[valid_mask] = np.sign(diff).astype(int)
 
     excursions = []
-    run_length = 1
-    for i in range(1, len(pos_v)):
-        if pos_v[i] == pos_v[i - 1]:
-            run_length += 1
-        else:
-            if run_length >= min_bars:
-                # Croisement valide : bougie i est la première du nouveau camp
-                s = sma_v[i]
-                if s > 0:
-                    pct = (high_v[i] - s) / s * 100 if pos_v[i] > 0 else (s - low_v[i]) / s * 100
-                    if pct >= 0:
-                        excursions.append(pct)
-            run_length = 1
+
+    run_sign = 0
+    run_start = None
+    run_len = 0
+
+    for idx in range(first_valid, len(df)):
+        s = raw_sign[idx]
+
+        if s == 0:
+            continue
+
+        if run_sign == 0:
+            run_sign = s
+            run_start = idx
+            run_len = 1
+            continue
+
+        if s == run_sign:
+            run_len += 1
+            continue
+
+        # Fin du run précédent
+        if run_start is not None and run_len >= min_bars:
+            sma_seg = sma_arr[run_start:idx]
+            close_seg = close_arr[run_start:idx]
+            v = ~np.isnan(sma_seg) & (sma_seg > 0)
+            if v.any():
+                exc_vals = np.abs(close_seg[v] - sma_seg[v]) / sma_seg[v] * 100
+                excursions.append(float(exc_vals.max()))
+
+        # Nouveau run
+        run_sign = s
+        run_start = idx
+        run_len = 1
+
+    # Dernier run
+    if run_start is not None and run_len >= min_bars:
+        sma_seg = sma_arr[run_start:len(df)]
+        close_seg = close_arr[run_start:len(df)]
+        v = ~np.isnan(sma_seg) & (sma_seg > 0)
+        if v.any():
+            exc_vals = np.abs(close_seg[v] - sma_seg[v]) / sma_seg[v] * 100
+            excursions.append(float(exc_vals.max()))
+
     return excursions
 
 
@@ -137,124 +164,177 @@ def backtest_strategy(
     fee_pct: float,
     min_bars: int = 3,
     warmup_years: int = 2,
+    min_excursions_history: int = 10,
 ) -> dict:
-    """Backteste la stratégie de réversion vers la SMA.
+    """Backteste une stratégie de mean reversion vers la SMA.
 
     Logique :
-      - Préchauffage de `warmup_years` ans sans trades (pour accumuler l'historique).
-      - Dès qu'un crossing valide (run ≥ min_bars) est en cours et qu'on a ≥ 10 excursions
-        historiques, les seuils sont calculés (top 40/30/20/10 %).
-      - Sur chaque bougie du crossing (après confirmation min_bars), si l'excursion
-        |close − sma| / sma × 100 dépasse un seuil, on entre à l'open de la bougie suivante.
-      - Position fermée à l'open de la première bougie du crossing suivant.
-      - 4 colonnes indépendantes (bt40/bt30/bt20/bt10) : une entrée par niveau par crossing.
-      - P&L = ±(exit − entry) / entry × 100 − 2 × fee_pct.
+      - Warmup de `warmup_years` ans : accumulation des excursions historiques,
+        mais aucun trade.
+      - Un run correspond à une suite de bougies du même côté de la SMA.
+      - Après `min_bars` bougies confirmées dans un run, si l'excursion close-based
+        dépasse un seuil historique, entrée à l'open de la bougie suivante.
+      - Sortie lorsqu'un crossing est détecté sur la clôture d'une bougie :
+        exécution à l'open de la bougie suivante.
+      - Une seule entrée par run et par niveau.
+      - Les positions encore ouvertes à la fin sont clôturées au dernier close.
     """
     n = len(df)
     if n < period + 2:
         return {"bt40": 0.0, "bt30": 0.0, "bt20": 0.0, "bt10": 0.0}
 
-    close_arr = df["Close"].values.astype(float)
-    open_arr  = df["Open"].values.astype(float)
-    dt_arr    = pd.to_datetime(df["Datetime"].values)
+    required_cols = {"Datetime", "Open", "Close"}
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"Colonnes manquantes pour le backtest : {sorted(missing)}")
+
+    close_arr = df["Close"].astype(float).values
+    open_arr = df["Open"].astype(float).values
+    dt_arr = pd.to_datetime(df["Datetime"]).values
 
     sma_arr = pd.Series(close_arr).rolling(window=period).mean().values
 
-    # ── Signe de position (close vs SMA) — forward-fill les 0/NaN ───────────
-    diff = close_arr - np.where(np.isnan(sma_arr), np.nan, sma_arr)
-    raw_sign = np.sign(diff)
-    sign_arr = (
-        pd.Series(raw_sign)
-        .replace(0, np.nan)
-        .ffill()
-        .fillna(0)
-        .astype(int)
-        .values
-    )
+    valid_mask = ~np.isnan(sma_arr)
+    if not valid_mask.any():
+        return {"bt40": 0.0, "bt30": 0.0, "bt20": 0.0, "bt10": 0.0}
 
-    # ── Indice de fin du préchauffage ────────────────────────────────────────
-    first_valid = int(np.argmax(~np.isnan(sma_arr)))
-    warmup_dt   = dt_arr[first_valid] + pd.DateOffset(years=warmup_years)
-    warmup_end  = n
+    first_valid = int(np.argmax(valid_mask))
+
+    # Signe : +1 au-dessus, -1 en-dessous, 0 sur la SMA / avant SMA disponible
+    raw_sign = np.zeros(n, dtype=int)
+    diff = close_arr[valid_mask] - sma_arr[valid_mask]
+    raw_sign[valid_mask] = np.sign(diff).astype(int)
+
+    # Warmup en années calendaires
+    warmup_dt = pd.Timestamp(dt_arr[first_valid]) + pd.DateOffset(years=warmup_years)
+    warmup_end = n
     for idx in range(first_valid, n):
-        if dt_arr[idx] >= warmup_dt:
+        if pd.Timestamp(dt_arr[idx]) >= warmup_dt:
             warmup_end = idx
             break
 
-    # ── Backtest ─────────────────────────────────────────────────────────────
-    excursions: list[float] = []
-    pnl = [0.0, 0.0, 0.0, 0.0]          # bt40, bt30, bt20, bt10
-    pct_ranks = [60, 70, 80, 90]         # np.percentile → top 40/30/20/10 %
+    # Historique des excursions max par run terminé
+    excursions_history: list[float] = []
 
-    i = first_valid
-    while i < n:
-        s = sign_arr[i]
+    # PnL cumulé par niveau : bt40, bt30, bt20, bt10
+    pnl = [0.0, 0.0, 0.0, 0.0]
+    pct_ranks = [60, 70, 80, 90]
+    thresholds: list[float | None] = [None, None, None, None]
+
+    # État des trades
+    in_trade = [False, False, False, False]
+    trade_entry = [0.0, 0.0, 0.0, 0.0]
+    trade_dir = [0, 0, 0, 0]  # +1 si run au-dessus SMA => short ; -1 => long
+
+    # Trouver le premier signe non nul pour démarrer les runs proprement
+    run_sign = 0
+    run_start = None
+    run_len = 0
+    triggered = [False, False, False, False]
+
+    for idx in range(first_valid, n):
+        s = raw_sign[idx]
+
+        # Ignore les bougies sur la SMA exacte : elles ne changent pas le run
         if s == 0:
-            i += 1
             continue
 
-        # Étendue du run courant
-        j = i + 1
-        while j < n and sign_arr[j] == s:
-            j += 1
-        run_len = j - i
+        # Initialisation du tout premier run non nul
+        if run_sign == 0:
+            run_sign = s
+            run_start = idx
+            run_len = 1
+            triggered = [False, False, False, False]
+            continue
 
-        if run_len >= min_bars:
-            # ── Seuils calculés sur l'historique disponible ──────────────────
-            thresholds: list[float | None] = [None] * 4
-            if len(excursions) >= 10:
-                arr = np.array(excursions)
-                thresholds = [float(np.percentile(arr, r)) for r in pct_ranks]
+        # Cas 1 : on reste dans le même run
+        if s == run_sign:
+            run_len += 1
 
-            # ── Scan des bougies du crossing (à partir de min_bars confirmées) ─
-            triggered = [False] * 4
-            positions: list[float | None] = [None] * 4
+            # Vérification des entrées à partir de min_bars bougies confirmées
+            if idx >= warmup_end and run_len >= min_bars:
+                sma_i = sma_arr[idx]
+                if not np.isnan(sma_i) and sma_i > 0:
+                    exc = abs(close_arr[idx] - sma_i) / sma_i * 100
+                    entry_idx = idx + 1
 
-            for k_bar in range(i + min_bars - 1, j):
-                s_k = sma_arr[k_bar]
-                if np.isnan(s_k) or s_k == 0:
-                    continue
-                exc = abs(close_arr[k_bar] - s_k) / s_k * 100
+                    if entry_idx < n and not np.isnan(open_arr[entry_idx]):
+                        for k in range(4):
+                            if (
+                                thresholds[k] is not None
+                                and exc > thresholds[k]
+                                and not triggered[k]
+                                and not in_trade[k]
+                            ):
+                                triggered[k] = True
+                                in_trade[k] = True
+                                trade_entry[k] = open_arr[entry_idx]
+                                trade_dir[k] = run_sign
 
-                for k in range(4):
-                    if (
-                        thresholds[k] is not None
-                        and exc > thresholds[k]
-                        and not triggered[k]
-                    ):
-                        entry_idx = k_bar + 1
-                        # Entrée avant la fin du crossing ET dans la période active
-                        if (
-                            entry_idx < j
-                            and entry_idx < n
-                            and not np.isnan(open_arr[entry_idx])
-                            and entry_idx >= warmup_end
-                        ):
-                            triggered[k] = True
-                            positions[k] = open_arr[entry_idx]
+            continue
 
-            # ── Clôture à l'open du premier bar du crossing suivant ──────────
-            exit_idx = j
-            if exit_idx < n and not np.isnan(open_arr[exit_idx]):
-                exit_price = open_arr[exit_idx]
-                for k in range(4):
-                    if positions[k] is not None:
-                        entry = positions[k]
-                        if s > 0:   # au-dessus SMA → short (vers la SMA = baisse)
-                            raw = (entry - exit_price) / entry * 100
-                        else:       # en-dessous SMA → long (vers la SMA = hausse)
-                            raw = (exit_price - entry) / entry * 100
-                        pnl[k] += raw - 2 * fee_pct
+        # Cas 2 : crossing détecté à la clôture de idx
+        # Le run précédent se termine sur [run_start, idx)
+        if run_start is not None and run_len >= min_bars:
+            sma_seg = sma_arr[run_start:idx]
+            close_seg = close_arr[run_start:idx]
+            v = ~np.isnan(sma_seg) & (sma_seg > 0)
+            if v.any():
+                exc_vals = np.abs(close_seg[v] - sma_seg[v]) / sma_seg[v] * 100
+                excursions_history.append(float(exc_vals.max()))
 
-            # ── Enregistrement de l'excursion max du crossing (close-based) ──
-            sma_run  = sma_arr[i:j]
-            clos_run = close_arr[i:j]
-            valid    = ~np.isnan(sma_run) & (sma_run > 0)
-            if valid.any():
-                exc_vals = np.abs(clos_run[valid] - sma_run[valid]) / sma_run[valid] * 100
-                excursions.append(float(exc_vals.max()))
+                if len(excursions_history) >= min_excursions_history:
+                    arr_e = np.array(excursions_history, dtype=float)
+                    thresholds = [float(np.percentile(arr_e, r)) for r in pct_ranks]
 
-        i = j
+        # Sortie des trades :
+        # le crossing est connu sur la clôture de idx,
+        # donc sortie réaliste à l'open de idx + 1
+        exit_idx = idx + 1
+        if exit_idx < n and not np.isnan(open_arr[exit_idx]):
+            exit_price = open_arr[exit_idx]
+            for k in range(4):
+                if in_trade[k]:
+                    entry = trade_entry[k]
+                    td = trade_dir[k]
+
+                    if td > 0:
+                        # run au-dessus SMA => trade short
+                        raw = (entry - exit_price) / entry * 100
+                    else:
+                        # run en-dessous SMA => trade long
+                        raw = (exit_price - entry) / entry * 100
+
+                    pnl[k] += raw - 2 * fee_pct
+                    in_trade[k] = False
+        else:
+            for k in range(4):
+                in_trade[k] = False
+
+        # Démarrage du nouveau run
+        run_sign = s
+        run_start = idx
+        run_len = 1
+        triggered = [False, False, False, False]
+
+        # Pas d'entrée immédiate ici :
+        # il faut attendre que le nouveau run accumule au moins min_bars bougies
+
+    # Clôture de fin de série au dernier close disponible
+    final_close = close_arr[-1]
+    if not np.isnan(final_close):
+        for k in range(4):
+            if in_trade[k]:
+                entry = trade_entry[k]
+                td = trade_dir[k]
+
+                if td > 0:
+                    raw = (entry - final_close) / entry * 100
+                else:
+                    raw = (final_close - entry) / entry * 100
+
+                pnl[k] += raw - 2 * fee_pct
+                in_trade[k] = False
 
     return {
         "bt40": round(pnl[0], 2),
