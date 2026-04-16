@@ -60,6 +60,36 @@ def compute_sma_slopes(close: pd.Series, period: int) -> pd.Series:
     return slope_pct.dropna()
 
 
+def compute_sma_crossings(close: pd.Series, period: int, min_bars: int = 3) -> int:
+    """Compte le nombre de croisements de la SMA.
+
+    Un croisement n'est comptabilisé que si le prix est resté au moins
+    `min_bars` bougies consécutives du même côté avant de changer de camp.
+    """
+    sma = close.rolling(window=period).mean()
+    valid_mask = sma.notna()
+    close_v = close[valid_mask].values
+    sma_v = sma[valid_mask].values
+
+    # +1 au-dessus, -1 en-dessous, 0 sur la SMA (ignoré)
+    position = np.sign(close_v - sma_v).astype(int)
+    position = position[position != 0]
+
+    if len(position) == 0:
+        return 0
+
+    crossings = 0
+    run_length = 1
+    for i in range(1, len(position)):
+        if position[i] == position[i - 1]:
+            run_length += 1
+        else:
+            if run_length >= min_bars:
+                crossings += 1
+            run_length = 1
+    return crossings
+
+
 def analyse_symbol(filepath: str, period: int) -> dict | None:
     try:
         df = pd.read_csv(filepath, parse_dates=["Datetime"])
@@ -73,13 +103,16 @@ def analyse_symbol(filepath: str, period: int) -> dict | None:
         pos = slopes[slopes > 0]
         neg = slopes[slopes < 0]
 
+        crossings = compute_sma_crossings(df["Close"], period)
+
         return {
-            "bars": len(df),
-            "avg":      round(slopes.mean(), 6),
-            "positive": round(pos.mean(),    6) if not pos.empty else 0.0,
-            "negative": round(neg.mean(),    6) if not neg.empty else 0.0,
-            "pct_up":  round(len(pos) / len(slopes) * 100, 1),
-            "abs_avg": round(slopes.abs().mean(), 6),
+            "bars":      len(df),
+            "avg":       round(slopes.mean(), 6),
+            "positive":  round(pos.mean(),    6) if not pos.empty else 0.0,
+            "negative":  round(neg.mean(),    6) if not neg.empty else 0.0,
+            "pct_up":    round(len(pos) / len(slopes) * 100, 1),
+            "abs_avg":   round(slopes.abs().mean(), 6),
+            "crossings": crossings,
         }
     except Exception as exc:
         print(f"  [ERREUR] {os.path.basename(filepath)}: {exc}", file=sys.stderr)
@@ -92,7 +125,7 @@ def main():
     parser.add_argument("--timeframe", default=DEFAULT_TIMEFRAME, help="Timeframe (1D, 4H, 1H, 30m, 15m, 5m, 1m)")
     parser.add_argument("--period",    default=DEFAULT_PERIOD, type=int, help="Longueur de la SMA")
     parser.add_argument("--sort",      default="symbol",
-                        choices=["symbol", "avg", "positive", "negative", "abs_avg", "pct_up"],
+                        choices=["symbol", "avg", "positive", "negative", "abs_avg", "pct_up", "crossings"],
                         help="Colonne de tri")
     args = parser.parse_args()
 
@@ -152,7 +185,7 @@ def main():
 
     # ── Affichage ────────────────────────────────────────────────────────────
     col_w = {"symbol": 18, "bars": 7, "avg": 12, "positive": 12, "negative": 12,
-             "abs_avg": 12, "pct_up": 9, "fee_pct": 9, "net_abs": 12}
+             "abs_avg": 12, "pct_up": 9, "fee_pct": 9, "net_abs": 12, "crossings": 11}
     header = (
         f"{'Symbole':<{col_w['symbol']}}"
         f"{'Bars':>{col_w['bars']}}"
@@ -163,6 +196,7 @@ def main():
         f"{'% haussier':>{col_w['pct_up']}}"
         f"{'Frais':>{col_w['fee_pct']}}"
         f"{'Net abs.':>{col_w['net_abs']}}"
+        f"{'Croisements':>{col_w['crossings']}}"
     )
     sep = "-" * len(header)
 
@@ -177,6 +211,7 @@ def main():
         up_str  = f"{row['pct_up']:.1f}%"
         fee_str = f"{row['fee_pct']:.4f}%"
         net_str = f"{row['net_abs']:+.6f}%"
+        cross_str = str(int(row['crossings']))
         print(
             f"{row['symbol']:<{col_w['symbol']}}"
             f"{int(row['bars']):>{col_w['bars']}}"
@@ -187,18 +222,20 @@ def main():
             f"{up_str:>{col_w['pct_up']}}"
             f"{fee_str:>{col_w['fee_pct']}}"
             f"{net_str:>{col_w['net_abs']}}"
+            f"{cross_str:>{col_w['crossings']}}"
         )
 
     print(sep)
 
     # Résumé global
-    avg_all = df_out["avg"].mean()
-    avg_pos = df_out["positive"].mean()
-    avg_neg = df_out["negative"].mean()
-    avg_abs = df_out["abs_avg"].mean()
-    avg_up  = df_out["pct_up"].mean()
-    avg_fee = df_out["fee_pct"].mean()
-    avg_net = df_out["net_abs"].mean()
+    avg_all   = df_out["avg"].mean()
+    avg_pos   = df_out["positive"].mean()
+    avg_neg   = df_out["negative"].mean()
+    avg_abs   = df_out["abs_avg"].mean()
+    avg_up    = df_out["pct_up"].mean()
+    avg_fee   = df_out["fee_pct"].mean()
+    avg_net   = df_out["net_abs"].mean()
+    avg_cross = df_out["crossings"].mean()
     print(
         f"{'MOYENNE GLOBALE':<{col_w['symbol']}}"
         f"{'':>{col_w['bars']}}"
@@ -209,6 +246,7 @@ def main():
         f"{avg_up:>{col_w['pct_up'] - 1}.1f}%"
         f"{avg_fee:>{col_w['fee_pct'] - 1}.4f}%"
         f"{avg_net:>+{col_w['net_abs'] - 1}.6f}%"
+        f"{avg_cross:>{col_w['crossings'] - 1}.1f}"
     )
     print()
 
