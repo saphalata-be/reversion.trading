@@ -1,0 +1,134 @@
+{
+  "AUDCAD": {
+    "fee_pct": 0.01
+  },
+  "AUDCHF": {
+    "fee_pct": 0.01
+  },
+  "AUDJPY": {
+    "fee_pct": 0.01
+  },
+  "AUDNZD": {
+    "fee_pct": 0.01
+  },
+  "AUDSGD": {
+    "fee_pct": 0.01
+  },
+  "AUDUSD": {
+    "fee_pct": 0.01
+  },
+  "AUSIDXAUD": {
+    "fee_pct": 0.01
+  },
+  "CADCHF": {
+    "fee_pct": 0.01
+  },
+  "CADJPY": {
+    "fee_pct": 0.01
+  },
+  "CHFJPY": {
+    "fee_pct": 0.01
+  },
+  "DEUIDXEUR": {
+    "fee_pct": 0.01
+  },
+  "ESPIDXEUR": {
+    "fee_pct": 0.01
+  },
+  "EURAUD": {
+    "fee_pct": 0.01
+  },
+  "EURCAD": {
+    "fee_pct": 0.01
+  },
+  "EURCHF": {
+    "fee_pct": 0.01
+  },
+  "EURGBP": {
+    "fee_pct": 0.01
+  },
+  "EURJPY": {
+    "fee_pct": 0.01
+  },
+  "EURNZD": {
+    "fee_pct": 0.01
+  },
+  "EURUSD": {
+    "fee_pct": 0.01
+  },
+  "EUSIDXEUR": {
+    "fee_pct": 0.01
+  },
+  "FRAIDXEUR": {
+    "fee_pct": 0.01
+  },
+  "GBPAUD": {
+    "fee_pct": 0.01
+  },
+  "GBPCAD": {
+    "fee_pct": 0.01
+  },
+  "GBPCHF": {
+    "fee_pct": 0.01
+  },
+  "GBPJPY": {
+    "fee_pct": 0.01
+  },
+  "GBPNZD": {
+    "fee_pct": 0.01
+  },
+  "GBPUSD": {
+    "fee_pct": 0.01
+  },
+  "GBRIDXGBP": {
+    "fee_pct": 0.01
+  },
+  "HKGIDXHKD": {
+    "fee_pct": 0.01
+  },
+  "JPMUSUSD": {
+    "fee_pct": 0.01
+  },
+  "JPNIDXJPY": {
+    "fee_pct": 0.01
+  },
+  "NLDIDXEUR": {
+    "fee_pct": 0.01
+  },
+  "NZDCAD": {
+    "fee_pct": 0.01
+  },
+  "NZDCHF": {
+    "fee_pct": 0.01
+  },
+  "NZDJPY": {
+    "fee_pct": 0.01
+  },
+  "NZDUSD": {
+    "fee_pct": 0.01
+  },
+  "USA30IDXUSD": {
+    "fee_pct": 0.01
+  },
+  "USA500IDXUSD": {
+    "fee_pct": 0.01
+  },
+  "USATECHIDXUSD": {
+    "fee_pct": 0.01
+  },
+  "USDCAD": {
+    "fee_pct": 0.01
+  },
+  "USDCHF": {
+    "fee_pct": 0.01
+  },
+  "USDJPY": {
+    "fee_pct": 0.01
+  },
+  "XAGUSD": {
+    "fee_pct": 0.01
+  },
+  "XAUUSD": {
+    "fee_pct": 0.01
+  }
+}

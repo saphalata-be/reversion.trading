@@ -14,6 +14,7 @@ Exemples:
 """
 
 import argparse
+import json
 import os
 import sys
 
@@ -24,6 +25,31 @@ import pandas as pd
 DEFAULT_DIR = r"E:\Forex\History\TickStory"
 DEFAULT_TIMEFRAME = "1D"
 DEFAULT_PERIOD = 20
+DEFAULT_FEE_PCT = 0.01  # frais par défaut : 0.01 % par transaction
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "symbols_config.json")
+
+
+def load_symbol_config(config_path: str) -> dict:
+    """Charge la configuration des symboles depuis le fichier JSON."""
+    if os.path.isfile(config_path):
+        with open(config_path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    return {}
+
+
+def save_symbol_config(config: dict, config_path: str) -> None:
+    """Sauvegarde la configuration des symboles dans le fichier JSON."""
+    with open(config_path, "w", encoding="utf-8") as fh:
+        json.dump(config, fh, indent=2, ensure_ascii=False)
+
+
+def get_symbol_fee(config: dict, symbol: str) -> float:
+    """Retourne les frais du symbole ; l'ajoute avec la valeur par défaut si absent."""
+    if symbol not in config:
+        config[symbol] = {"fee_pct": DEFAULT_FEE_PCT}
+    elif "fee_pct" not in config[symbol]:
+        config[symbol]["fee_pct"] = DEFAULT_FEE_PCT
+    return config[symbol]["fee_pct"]
 
 
 def compute_sma_slopes(close: pd.Series, period: int) -> pd.Series:
@@ -85,13 +111,27 @@ def main():
     print(f"Répertoire : {args.dir}")
     print(f"Symboles trouvés : {len(files)}\n")
 
+    # Chargement de la configuration des symboles (frais, etc.)
+    symbol_config = load_symbol_config(CONFIG_FILE)
+    new_symbols_before = set(symbol_config.keys())
+
     results = []
     for filename in files:
         symbol = filename.replace(pattern, "")
         filepath = os.path.join(args.dir, filename)
         stats = analyse_symbol(filepath, args.period)
         if stats:
+            fee = get_symbol_fee(symbol_config, symbol)
+            stats["fee_pct"] = fee
+            stats["net_abs"] = round(stats["abs_avg"] - fee, 6)
             results.append({"symbol": symbol, **stats})
+
+    # Sauvegarde la config (nouveaux symboles ajoutés avec valeurs par défaut)
+    save_symbol_config(symbol_config, CONFIG_FILE)
+    new_symbols_after = set(symbol_config.keys()) - new_symbols_before
+    if new_symbols_after:
+        print(f"  → {len(new_symbols_after)} nouveau(x) symbole(s) ajouté(s) dans {CONFIG_FILE} "
+              f"avec frais par défaut ({DEFAULT_FEE_PCT}%).\n")
 
     if not results:
         print("Aucun résultat calculable.")
@@ -111,7 +151,8 @@ def main():
     df_out = df_out.reset_index(drop=True)
 
     # ── Affichage ────────────────────────────────────────────────────────────
-    col_w = {"symbol": 18, "bars": 7, "avg": 12, "positive": 12, "negative": 12, "abs_avg": 12, "pct_up": 9}
+    col_w = {"symbol": 18, "bars": 7, "avg": 12, "positive": 12, "negative": 12,
+             "abs_avg": 12, "pct_up": 9, "fee_pct": 9, "net_abs": 12}
     header = (
         f"{'Symbole':<{col_w['symbol']}}"
         f"{'Bars':>{col_w['bars']}}"
@@ -120,6 +161,8 @@ def main():
         f"{'Moy. négative':>{col_w['negative']}}"
         f"{'Moy. absolue':>{col_w['abs_avg']}}"
         f"{'% haussier':>{col_w['pct_up']}}"
+        f"{'Frais':>{col_w['fee_pct']}}"
+        f"{'Net abs.':>{col_w['net_abs']}}"
     )
     sep = "-" * len(header)
 
@@ -132,6 +175,8 @@ def main():
         neg_str = f"{row['negative']:+.6f}%"
         abs_str = f"{row['abs_avg']:.6f}%"
         up_str  = f"{row['pct_up']:.1f}%"
+        fee_str = f"{row['fee_pct']:.4f}%"
+        net_str = f"{row['net_abs']:+.6f}%"
         print(
             f"{row['symbol']:<{col_w['symbol']}}"
             f"{int(row['bars']):>{col_w['bars']}}"
@@ -140,6 +185,8 @@ def main():
             f"{neg_str:>{col_w['negative']}}"
             f"{abs_str:>{col_w['abs_avg']}}"
             f"{up_str:>{col_w['pct_up']}}"
+            f"{fee_str:>{col_w['fee_pct']}}"
+            f"{net_str:>{col_w['net_abs']}}"
         )
 
     print(sep)
@@ -150,6 +197,8 @@ def main():
     avg_neg = df_out["negative"].mean()
     avg_abs = df_out["abs_avg"].mean()
     avg_up  = df_out["pct_up"].mean()
+    avg_fee = df_out["fee_pct"].mean()
+    avg_net = df_out["net_abs"].mean()
     print(
         f"{'MOYENNE GLOBALE':<{col_w['symbol']}}"
         f"{'':>{col_w['bars']}}"
@@ -158,6 +207,8 @@ def main():
         f"{avg_neg:>+{col_w['negative'] - 1}.6f}%"
         f"{avg_abs:>{col_w['abs_avg'] - 1}.6f}%"
         f"{avg_up:>{col_w['pct_up'] - 1}.1f}%"
+        f"{avg_fee:>{col_w['fee_pct'] - 1}.4f}%"
+        f"{avg_net:>+{col_w['net_abs'] - 1}.6f}%"
     )
     print()
 
