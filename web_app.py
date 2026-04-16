@@ -14,12 +14,22 @@ import os
 
 from flask import Flask, render_template_string, request
 
-from sma_slope_analysis import analyse_symbol, DEFAULT_DIR, DEFAULT_TIMEFRAME, DEFAULT_PERIOD
+from sma_slope_analysis import (
+    analyse_symbol,
+    load_symbol_config,
+    get_symbol_fee,
+    DEFAULT_DIR,
+    DEFAULT_TIMEFRAME,
+    DEFAULT_PERIOD,
+    CONFIG_FILE,
+)
 
 app = Flask(__name__)
 
 TIMEFRAMES = ["1m", "5m", "15m", "30m", "1H", "4H", "1D"]
-SORT_CHOICES = ["symbol", "avg", "positive", "negative", "abs_avg", "pct_up"]
+SORT_CHOICES = ["symbol", "avg", "positive", "negative", "abs_avg", "pct_up",
+                "crossings", "p40", "p30", "p20", "p10",
+                "bt40", "bt30", "bt20", "bt10"]
 SORT_LABELS = {
     "symbol":   "Symbole",
     "avg":      "Moy. générale",
@@ -27,6 +37,15 @@ SORT_LABELS = {
     "negative": "Moy. négative",
     "abs_avg":  "Moy. absolue",
     "pct_up":   "% haussier",
+    "crossings": "Croisements",
+    "p40": "Top 40%",
+    "p30": "Top 30%",
+    "p20": "Top 20%",
+    "p10": "Top 10%",
+    "bt40": "BT top40%",
+    "bt30": "BT top30%",
+    "bt20": "BT top20%",
+    "bt10": "BT top10%",
 }
 
 HTML_TEMPLATE = """
@@ -221,13 +240,22 @@ HTML_TEMPLATE = """
         <thead>
           <tr>
             {% set cols = [
-              ("symbol",   "Symbole"),
-              ("bars",     "Bars"),
-              ("avg",      "Moy. générale"),
-              ("positive", "Moy. positive"),
-              ("negative", "Moy. négative"),
-              ("abs_avg",  "Moy. absolue"),
-              ("pct_up",   "% haussier"),
+              ("symbol",    "Symbole"),
+              ("bars",      "Bars"),
+              ("avg",       "Moy. générale"),
+              ("positive",  "Moy. positive"),
+              ("negative",  "Moy. négative"),
+              ("abs_avg",   "Moy. absolue"),
+              ("pct_up",    "% haussier"),
+              ("crossings", "Croisements"),
+              ("p40",       "Top 40%"),
+              ("p30",       "Top 30%"),
+              ("p20",       "Top 20%"),
+              ("p10",       "Top 10%"),
+              ("bt40",      "BT top40%"),
+              ("bt30",      "BT top30%"),
+              ("bt20",      "BT top20%"),
+              ("bt10",      "BT top10%"),
             ] %}
             {% for col, label in cols %}
               <th class="{{ 'sorted-asc' if (selected_sort == col and col == 'symbol') else ('sorted-desc' if selected_sort == col else '') }}">
@@ -246,6 +274,15 @@ HTML_TEMPLATE = """
             <td class="neg">{{ '%+.6f' % row.negative }}%</td>
             <td>{{ '%.6f' % row.abs_avg }}%</td>
             <td>{{ '%.1f' % row.pct_up }}%</td>
+            <td>{{ row.crossings }}</td>
+            <td>{{ '%.4f' % row.p40 }}%</td>
+            <td>{{ '%.4f' % row.p30 }}%</td>
+            <td>{{ '%.4f' % row.p20 }}%</td>
+            <td>{{ '%.4f' % row.p10 }}%</td>
+            <td class="{{ 'pos' if row.bt40 > 0 else 'neg' }}">{{ '%+.2f' % row.bt40 }}%</td>
+            <td class="{{ 'pos' if row.bt30 > 0 else 'neg' }}">{{ '%+.2f' % row.bt30 }}%</td>
+            <td class="{{ 'pos' if row.bt20 > 0 else 'neg' }}">{{ '%+.2f' % row.bt20 }}%</td>
+            <td class="{{ 'pos' if row.bt10 > 0 else 'neg' }}">{{ '%+.2f' % row.bt10 }}%</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -258,6 +295,15 @@ HTML_TEMPLATE = """
             <td class="neg">{{ '%+.6f' % summary.negative }}%</td>
             <td>{{ '%.6f' % summary.abs_avg }}%</td>
             <td>{{ '%.1f' % summary.pct_up }}%</td>
+            <td>{{ '%.1f' % summary.crossings }}</td>
+            <td>{{ '%.4f' % summary.p40 }}%</td>
+            <td>{{ '%.4f' % summary.p30 }}%</td>
+            <td>{{ '%.4f' % summary.p20 }}%</td>
+            <td>{{ '%.4f' % summary.p10 }}%</td>
+            <td class="{{ 'pos' if summary.bt40 > 0 else 'neg' }}">{{ '%+.2f' % summary.bt40 }}%</td>
+            <td class="{{ 'pos' if summary.bt30 > 0 else 'neg' }}">{{ '%+.2f' % summary.bt30 }}%</td>
+            <td class="{{ 'pos' if summary.bt20 > 0 else 'neg' }}">{{ '%+.2f' % summary.bt20 }}%</td>
+            <td class="{{ 'pos' if summary.bt10 > 0 else 'neg' }}">{{ '%+.2f' % summary.bt10 }}%</td>
           </tr>
         </tfoot>
       </table>
@@ -291,10 +337,12 @@ def index():
         if not files:
             error = f"Aucun fichier trouvé pour le timeframe '{tf}' dans {DEFAULT_DIR}"
         else:
+            symbol_config = load_symbol_config(CONFIG_FILE)
             for filename in files:
                 symbol   = filename.replace(pattern, "")
                 filepath = os.path.join(DEFAULT_DIR, filename)
-                stats    = analyse_symbol(filepath, period)
+                fee      = get_symbol_fee(symbol_config, symbol)
+                stats    = analyse_symbol(filepath, period, fee)
                 if stats:
                     rows.append({"symbol": symbol, **stats})
 
@@ -309,7 +357,9 @@ def index():
 
     summary = {}
     if rows:
-        for key in ("avg", "positive", "negative", "abs_avg", "pct_up"):
+        for key in ("avg", "positive", "negative", "abs_avg", "pct_up",
+                    "crossings", "p40", "p30", "p20", "p10",
+                    "bt40", "bt30", "bt20", "bt10"):
             summary[key] = sum(r[key] for r in rows) / len(rows)
 
     return render_template_string(

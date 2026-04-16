@@ -131,7 +131,140 @@ def compute_crossing_excursions(df: pd.DataFrame, period: int, min_bars: int = 3
     return excursions
 
 
-def analyse_symbol(filepath: str, period: int) -> dict | None:
+def backtest_strategy(
+    df: pd.DataFrame,
+    period: int,
+    fee_pct: float,
+    min_bars: int = 3,
+    warmup_years: int = 2,
+) -> dict:
+    """Backteste la stratégie de réversion vers la SMA.
+
+    Logique :
+      - Préchauffage de `warmup_years` ans sans trades (pour accumuler l'historique).
+      - Dès qu'un crossing valide (run ≥ min_bars) est en cours et qu'on a ≥ 10 excursions
+        historiques, les seuils sont calculés (top 40/30/20/10 %).
+      - Sur chaque bougie du crossing (après confirmation min_bars), si l'excursion
+        |close − sma| / sma × 100 dépasse un seuil, on entre à l'open de la bougie suivante.
+      - Position fermée à l'open de la première bougie du crossing suivant.
+      - 4 colonnes indépendantes (bt40/bt30/bt20/bt10) : une entrée par niveau par crossing.
+      - P&L = ±(exit − entry) / entry × 100 − 2 × fee_pct.
+    """
+    n = len(df)
+    if n < period + 2:
+        return {"bt40": 0.0, "bt30": 0.0, "bt20": 0.0, "bt10": 0.0}
+
+    close_arr = df["Close"].values.astype(float)
+    open_arr  = df["Open"].values.astype(float)
+    dt_arr    = pd.to_datetime(df["Datetime"].values)
+
+    sma_arr = pd.Series(close_arr).rolling(window=period).mean().values
+
+    # ── Signe de position (close vs SMA) — forward-fill les 0/NaN ───────────
+    diff = close_arr - np.where(np.isnan(sma_arr), np.nan, sma_arr)
+    raw_sign = np.sign(diff)
+    sign_arr = (
+        pd.Series(raw_sign)
+        .replace(0, np.nan)
+        .ffill()
+        .fillna(0)
+        .astype(int)
+        .values
+    )
+
+    # ── Indice de fin du préchauffage ────────────────────────────────────────
+    first_valid = int(np.argmax(~np.isnan(sma_arr)))
+    warmup_dt   = dt_arr[first_valid] + pd.DateOffset(years=warmup_years)
+    warmup_end  = n
+    for idx in range(first_valid, n):
+        if dt_arr[idx] >= warmup_dt:
+            warmup_end = idx
+            break
+
+    # ── Backtest ─────────────────────────────────────────────────────────────
+    excursions: list[float] = []
+    pnl = [0.0, 0.0, 0.0, 0.0]          # bt40, bt30, bt20, bt10
+    pct_ranks = [60, 70, 80, 90]         # np.percentile → top 40/30/20/10 %
+
+    i = first_valid
+    while i < n:
+        s = sign_arr[i]
+        if s == 0:
+            i += 1
+            continue
+
+        # Étendue du run courant
+        j = i + 1
+        while j < n and sign_arr[j] == s:
+            j += 1
+        run_len = j - i
+
+        if run_len >= min_bars:
+            # ── Seuils calculés sur l'historique disponible ──────────────────
+            thresholds: list[float | None] = [None] * 4
+            if len(excursions) >= 10:
+                arr = np.array(excursions)
+                thresholds = [float(np.percentile(arr, r)) for r in pct_ranks]
+
+            # ── Scan des bougies du crossing (à partir de min_bars confirmées) ─
+            triggered = [False] * 4
+            positions: list[float | None] = [None] * 4
+
+            for k_bar in range(i + min_bars - 1, j):
+                s_k = sma_arr[k_bar]
+                if np.isnan(s_k) or s_k == 0:
+                    continue
+                exc = abs(close_arr[k_bar] - s_k) / s_k * 100
+
+                for k in range(4):
+                    if (
+                        thresholds[k] is not None
+                        and exc > thresholds[k]
+                        and not triggered[k]
+                    ):
+                        entry_idx = k_bar + 1
+                        # Entrée avant la fin du crossing ET dans la période active
+                        if (
+                            entry_idx < j
+                            and entry_idx < n
+                            and not np.isnan(open_arr[entry_idx])
+                            and entry_idx >= warmup_end
+                        ):
+                            triggered[k] = True
+                            positions[k] = open_arr[entry_idx]
+
+            # ── Clôture à l'open du premier bar du crossing suivant ──────────
+            exit_idx = j
+            if exit_idx < n and not np.isnan(open_arr[exit_idx]):
+                exit_price = open_arr[exit_idx]
+                for k in range(4):
+                    if positions[k] is not None:
+                        entry = positions[k]
+                        if s > 0:   # au-dessus SMA → short (vers la SMA = baisse)
+                            raw = (entry - exit_price) / entry * 100
+                        else:       # en-dessous SMA → long (vers la SMA = hausse)
+                            raw = (exit_price - entry) / entry * 100
+                        pnl[k] += raw - 2 * fee_pct
+
+            # ── Enregistrement de l'excursion max du crossing (close-based) ──
+            sma_run  = sma_arr[i:j]
+            clos_run = close_arr[i:j]
+            valid    = ~np.isnan(sma_run) & (sma_run > 0)
+            if valid.any():
+                exc_vals = np.abs(clos_run[valid] - sma_run[valid]) / sma_run[valid] * 100
+                excursions.append(float(exc_vals.max()))
+
+        i = j
+
+    return {
+        "bt40": round(pnl[0], 2),
+        "bt30": round(pnl[1], 2),
+        "bt20": round(pnl[2], 2),
+        "bt10": round(pnl[3], 2),
+    }
+
+
+def analyse_symbol(filepath: str, period: int, fee_pct: float = DEFAULT_FEE_PCT) -> dict | None:
     try:
         df = pd.read_csv(filepath, parse_dates=["Datetime"])
         if len(df) < period + 2:
@@ -156,6 +289,8 @@ def analyse_symbol(filepath: str, period: int) -> dict | None:
         else:
             p40 = p30 = p20 = p10 = 0.0
 
+        bt = backtest_strategy(df, period, fee_pct)
+
         return {
             "bars":      len(df),
             "avg":       round(slopes.mean(), 6),
@@ -165,6 +300,8 @@ def analyse_symbol(filepath: str, period: int) -> dict | None:
             "abs_avg":   round(slopes.abs().mean(), 6),
             "crossings": crossings,
             "p40": p40, "p30": p30, "p20": p20, "p10": p10,
+            "bt40": bt["bt40"], "bt30": bt["bt30"],
+            "bt20": bt["bt20"], "bt10": bt["bt10"],
         }
     except Exception as exc:
         print(f"  [ERREUR] {os.path.basename(filepath)}: {exc}", file=sys.stderr)
@@ -178,7 +315,8 @@ def main():
     parser.add_argument("--period",    default=DEFAULT_PERIOD, type=int, help="Longueur de la SMA")
     parser.add_argument("--sort",      default="symbol",
                         choices=["symbol", "avg", "positive", "negative", "abs_avg", "pct_up", "crossings",
-                                 "p40", "p30", "p20", "p10"],
+                                 "p40", "p30", "p20", "p10",
+                                 "bt40", "bt30", "bt20", "bt10"],
                         help="Colonne de tri")
     args = parser.parse_args()
 
@@ -205,9 +343,9 @@ def main():
     for filename in files:
         symbol = filename.replace(pattern, "")
         filepath = os.path.join(args.dir, filename)
-        stats = analyse_symbol(filepath, args.period)
+        fee = get_symbol_fee(symbol_config, symbol)
+        stats = analyse_symbol(filepath, args.period, fee)
         if stats:
-            fee = get_symbol_fee(symbol_config, symbol)
             stats["fee_pct"] = fee
             stats["net_abs"] = round(stats["abs_avg"] - fee, 6)
             results.append({"symbol": symbol, **stats})
@@ -239,7 +377,8 @@ def main():
     # ── Affichage ────────────────────────────────────────────────────────────
     col_w = {"symbol": 18, "bars": 7, "avg": 12, "positive": 12, "negative": 12,
              "abs_avg": 12, "pct_up": 9, "fee_pct": 9, "net_abs": 12, "crossings": 11,
-             "p40": 10, "p30": 10, "p20": 10, "p10": 10}
+             "p40": 10, "p30": 10, "p20": 10, "p10": 10,
+             "bt40": 12, "bt30": 12, "bt20": 12, "bt10": 12}
     header = (
         f"{'Symbole':<{col_w['symbol']}}"
         f"{'Bars':>{col_w['bars']}}"
@@ -255,6 +394,10 @@ def main():
         f"{'Top 30%':>{col_w['p30']}}"
         f"{'Top 20%':>{col_w['p20']}}"
         f"{'Top 10%':>{col_w['p10']}}"
+        f"{'BT top40%':>{col_w['bt40']}}"
+        f"{'BT top30%':>{col_w['bt30']}}"
+        f"{'BT top20%':>{col_w['bt20']}}"
+        f"{'BT top10%':>{col_w['bt10']}}"
     )
     sep = "-" * len(header)
 
@@ -270,10 +413,14 @@ def main():
         fee_str = f"{row['fee_pct']:.4f}%"
         net_str = f"{row['net_abs']:+.6f}%"
         cross_str = str(int(row['crossings']))
-        p40_str = f"{row['p40']:.4f}%"
-        p30_str = f"{row['p30']:.4f}%"
-        p20_str = f"{row['p20']:.4f}%"
-        p10_str = f"{row['p10']:.4f}%"
+        p40_str  = f"{row['p40']:.4f}%"
+        p30_str  = f"{row['p30']:.4f}%"
+        p20_str  = f"{row['p20']:.4f}%"
+        p10_str  = f"{row['p10']:.4f}%"
+        bt40_str = f"{row['bt40']:+.2f}%"
+        bt30_str = f"{row['bt30']:+.2f}%"
+        bt20_str = f"{row['bt20']:+.2f}%"
+        bt10_str = f"{row['bt10']:+.2f}%"
         print(
             f"{row['symbol']:<{col_w['symbol']}}"
             f"{int(row['bars']):>{col_w['bars']}}"
@@ -289,6 +436,10 @@ def main():
             f"{p30_str:>{col_w['p30']}}"
             f"{p20_str:>{col_w['p20']}}"
             f"{p10_str:>{col_w['p10']}}"
+            f"{bt40_str:>{col_w['bt40']}}"
+            f"{bt30_str:>{col_w['bt30']}}"
+            f"{bt20_str:>{col_w['bt20']}}"
+            f"{bt10_str:>{col_w['bt10']}}"
         )
 
     print(sep)
@@ -306,6 +457,10 @@ def main():
     avg_p30   = df_out["p30"].mean()
     avg_p20   = df_out["p20"].mean()
     avg_p10   = df_out["p10"].mean()
+    avg_bt40  = df_out["bt40"].mean()
+    avg_bt30  = df_out["bt30"].mean()
+    avg_bt20  = df_out["bt20"].mean()
+    avg_bt10  = df_out["bt10"].mean()
     print(
         f"{'MOYENNE GLOBALE':<{col_w['symbol']}}"
         f"{'':>{col_w['bars']}}"
@@ -321,6 +476,10 @@ def main():
         f"{avg_p30:>{col_w['p30'] - 1}.4f}%"
         f"{avg_p20:>{col_w['p20'] - 1}.4f}%"
         f"{avg_p10:>{col_w['p10'] - 1}.4f}%"
+        f"{avg_bt40:>+{col_w['bt40'] - 1}.2f}%"
+        f"{avg_bt30:>+{col_w['bt30'] - 1}.2f}%"
+        f"{avg_bt20:>+{col_w['bt20'] - 1}.2f}%"
+        f"{avg_bt10:>+{col_w['bt10'] - 1}.2f}%"
     )
     print()
 
