@@ -197,14 +197,6 @@
               ("abs_avg",   "Moy. absolue"),
               ("pct_up",    "% haussier"),
               ("crossings", "Croisements"),
-              ("p40",       "Top 40%"),
-              ("p30",       "Top 30%"),
-              ("p20",       "Top 20%"),
-              ("p10",       "Top 10%"),
-              ("bt40",      "BT top40%"),
-              ("bt30",      "BT top30%"),
-              ("bt20",      "BT top20%"),
-              ("bt10",      "BT top10%"),
             ] %}
             {% for col, label in cols %}
               <th class="{{ 'sorted-asc' if (selected_sort == col and col == 'symbol') else ('sorted-desc' if selected_sort == col else '') }}">
@@ -224,14 +216,6 @@
             <td>{{ '%.6f' % row.abs_avg }}%</td>
             <td>{{ '%.1f' % row.pct_up }}%</td>
             <td>{{ row.crossings }}</td>
-            <td>{{ '%.4f' % row.p40 }}%</td>
-            <td>{{ '%.4f' % row.p30 }}%</td>
-            <td>{{ '%.4f' % row.p20 }}%</td>
-            <td>{{ '%.4f' % row.p10 }}%</td>
-            <td class="{{ 'pos' if row.bt40 > 0 else 'neg' }}">{{ '%+.2f' % row.bt40 }}%</td>
-            <td class="{{ 'pos' if row.bt30 > 0 else 'neg' }}">{{ '%+.2f' % row.bt30 }}%</td>
-            <td class="{{ 'pos' if row.bt20 > 0 else 'neg' }}">{{ '%+.2f' % row.bt20 }}%</td>
-            <td class="{{ 'pos' if row.bt10 > 0 else 'neg' }}">{{ '%+.2f' % row.bt10 }}%</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -245,14 +229,6 @@
             <td>{{ '%.6f' % summary.abs_avg }}%</td>
             <td>{{ '%.1f' % summary.pct_up }}%</td>
             <td>{{ '%.1f' % summary.crossings }}</td>
-            <td>{{ '%.4f' % summary.p40 }}%</td>
-            <td>{{ '%.4f' % summary.p30 }}%</td>
-            <td>{{ '%.4f' % summary.p20 }}%</td>
-            <td>{{ '%.4f' % summary.p10 }}%</td>
-            <td class="{{ 'pos' if summary.bt40 > 0 else 'neg' }}">{{ '%+.2f' % summary.bt40 }}%</td>
-            <td class="{{ 'pos' if summary.bt30 > 0 else 'neg' }}">{{ '%+.2f' % summary.bt30 }}%</td>
-            <td class="{{ 'pos' if summary.bt20 > 0 else 'neg' }}">{{ '%+.2f' % summary.bt20 }}%</td>
-            <td class="{{ 'pos' if summary.bt10 > 0 else 'neg' }}">{{ '%+.2f' % summary.bt10 }}%</td>
           </tr>
         </tfoot>
       </table>

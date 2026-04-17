@@ -21,9 +21,6 @@ import sys
 import numpy as np
 import pandas as pd
 
-from strategy_percentile import backtest_strategy
-
-
 DEFAULT_DIR = r"E:\Forex\History\TickStory"
 DEFAULT_TIMEFRAME = "1D"
 DEFAULT_PERIOD = 20
@@ -92,74 +89,6 @@ def compute_sma_crossings(close: pd.Series, period: int, min_bars: int = 3) -> i
     return crossings
 
 
-def compute_crossing_excursions(df: pd.DataFrame, period: int, min_bars: int = 3) -> list:
-    """Retourne la liste des excursions max close-based (%) de chaque run valide.
-
-    Pour chaque run d'au moins `min_bars` bougies d'un même côté de la SMA,
-    on enregistre l'excursion maximale :
-        abs(close - sma) / sma * 100
-    """
-    close_arr = df["Close"].astype(float).values
-    sma_arr = pd.Series(close_arr).rolling(window=period).mean().values
-
-    valid_mask = ~np.isnan(sma_arr)
-    if not valid_mask.any():
-        return []
-
-    first_valid = int(np.argmax(valid_mask))
-
-    raw_sign = np.zeros(len(df), dtype=int)
-    diff = close_arr[valid_mask] - sma_arr[valid_mask]
-    raw_sign[valid_mask] = np.sign(diff).astype(int)
-
-    excursions = []
-
-    run_sign = 0
-    run_start = None
-    run_len = 0
-
-    for idx in range(first_valid, len(df)):
-        s = raw_sign[idx]
-
-        if s == 0:
-            continue
-
-        if run_sign == 0:
-            run_sign = s
-            run_start = idx
-            run_len = 1
-            continue
-
-        if s == run_sign:
-            run_len += 1
-            continue
-
-        # Fin du run précédent
-        if run_start is not None and run_len >= min_bars:
-            sma_seg = sma_arr[run_start:idx]
-            close_seg = close_arr[run_start:idx]
-            v = ~np.isnan(sma_seg) & (sma_seg > 0)
-            if v.any():
-                exc_vals = np.abs(close_seg[v] - sma_seg[v]) / sma_seg[v] * 100
-                excursions.append(float(exc_vals.max()))
-
-        # Nouveau run
-        run_sign = s
-        run_start = idx
-        run_len = 1
-
-    # Dernier run
-    if run_start is not None and run_len >= min_bars:
-        sma_seg = sma_arr[run_start:len(df)]
-        close_seg = close_arr[run_start:len(df)]
-        v = ~np.isnan(sma_seg) & (sma_seg > 0)
-        if v.any():
-            exc_vals = np.abs(close_seg[v] - sma_seg[v]) / sma_seg[v] * 100
-            excursions.append(float(exc_vals.max()))
-
-    return excursions
-
-
 def analyse_symbol(filepath: str, period: int, fee_pct: float = DEFAULT_FEE_PCT) -> dict | None:
     try:
         df = pd.read_csv(filepath, parse_dates=["Datetime"])
@@ -175,18 +104,6 @@ def analyse_symbol(filepath: str, period: int, fee_pct: float = DEFAULT_FEE_PCT)
 
         crossings = compute_sma_crossings(df["Close"], period)
 
-        excursions = compute_crossing_excursions(df, period)
-        if excursions:
-            arr = np.array(excursions)
-            p40 = round(float(np.percentile(arr, 60)), 4)
-            p30 = round(float(np.percentile(arr, 70)), 4)
-            p20 = round(float(np.percentile(arr, 80)), 4)
-            p10 = round(float(np.percentile(arr, 90)), 4)
-        else:
-            p40 = p30 = p20 = p10 = 0.0
-
-        bt = backtest_strategy(df, period, fee_pct)
-
         return {
             "bars":      len(df),
             "avg":       round(slopes.mean(), 6),
@@ -195,9 +112,6 @@ def analyse_symbol(filepath: str, period: int, fee_pct: float = DEFAULT_FEE_PCT)
             "pct_up":    round(len(pos) / len(slopes) * 100, 1),
             "abs_avg":   round(slopes.abs().mean(), 6),
             "crossings": crossings,
-            "p40": p40, "p30": p30, "p20": p20, "p10": p10,
-            "bt40": bt["bt40"], "bt30": bt["bt30"],
-            "bt20": bt["bt20"], "bt10": bt["bt10"],
         }
     except Exception as exc:
         print(f"  [ERREUR] {os.path.basename(filepath)}: {exc}", file=sys.stderr)
@@ -210,9 +124,7 @@ def main():
     parser.add_argument("--timeframe", default=DEFAULT_TIMEFRAME, help="Timeframe (1D, 4H, 1H, 30m, 15m, 5m, 1m)")
     parser.add_argument("--period",    default=DEFAULT_PERIOD, type=int, help="Longueur de la SMA")
     parser.add_argument("--sort",      default="symbol",
-                        choices=["symbol", "avg", "positive", "negative", "abs_avg", "pct_up", "crossings",
-                                 "p40", "p30", "p20", "p10",
-                                 "bt40", "bt30", "bt20", "bt10"],
+                        choices=["symbol", "avg", "positive", "negative", "abs_avg", "pct_up", "crossings"],
                         help="Colonne de tri")
     args = parser.parse_args()
 
@@ -272,9 +184,7 @@ def main():
 
     # ── Affichage ────────────────────────────────────────────────────────────
     col_w = {"symbol": 18, "bars": 7, "avg": 12, "positive": 12, "negative": 12,
-             "abs_avg": 12, "pct_up": 9, "fee_pct": 9, "net_abs": 12, "crossings": 11,
-             "p40": 10, "p30": 10, "p20": 10, "p10": 10,
-             "bt40": 12, "bt30": 12, "bt20": 12, "bt10": 12}
+             "abs_avg": 12, "pct_up": 9, "fee_pct": 9, "net_abs": 12, "crossings": 11}
     header = (
         f"{'Symbole':<{col_w['symbol']}}"
         f"{'Bars':>{col_w['bars']}}"
@@ -286,14 +196,6 @@ def main():
         f"{'Frais':>{col_w['fee_pct']}}"
         f"{'Net abs.':>{col_w['net_abs']}}"
         f"{'Croisements':>{col_w['crossings']}}"
-        f"{'Top 40%':>{col_w['p40']}}"
-        f"{'Top 30%':>{col_w['p30']}}"
-        f"{'Top 20%':>{col_w['p20']}}"
-        f"{'Top 10%':>{col_w['p10']}}"
-        f"{'BT top40%':>{col_w['bt40']}}"
-        f"{'BT top30%':>{col_w['bt30']}}"
-        f"{'BT top20%':>{col_w['bt20']}}"
-        f"{'BT top10%':>{col_w['bt10']}}"
     )
     sep = "-" * len(header)
 
@@ -309,14 +211,6 @@ def main():
         fee_str = f"{row['fee_pct']:.4f}%"
         net_str = f"{row['net_abs']:+.6f}%"
         cross_str = str(int(row['crossings']))
-        p40_str  = f"{row['p40']:.4f}%"
-        p30_str  = f"{row['p30']:.4f}%"
-        p20_str  = f"{row['p20']:.4f}%"
-        p10_str  = f"{row['p10']:.4f}%"
-        bt40_str = f"{row['bt40']:+.2f}%"
-        bt30_str = f"{row['bt30']:+.2f}%"
-        bt20_str = f"{row['bt20']:+.2f}%"
-        bt10_str = f"{row['bt10']:+.2f}%"
         print(
             f"{row['symbol']:<{col_w['symbol']}}"
             f"{int(row['bars']):>{col_w['bars']}}"
@@ -328,14 +222,6 @@ def main():
             f"{fee_str:>{col_w['fee_pct']}}"
             f"{net_str:>{col_w['net_abs']}}"
             f"{cross_str:>{col_w['crossings']}}"
-            f"{p40_str:>{col_w['p40']}}"
-            f"{p30_str:>{col_w['p30']}}"
-            f"{p20_str:>{col_w['p20']}}"
-            f"{p10_str:>{col_w['p10']}}"
-            f"{bt40_str:>{col_w['bt40']}}"
-            f"{bt30_str:>{col_w['bt30']}}"
-            f"{bt20_str:>{col_w['bt20']}}"
-            f"{bt10_str:>{col_w['bt10']}}"
         )
 
     print(sep)
@@ -349,14 +235,6 @@ def main():
     avg_fee   = df_out["fee_pct"].mean()
     avg_net   = df_out["net_abs"].mean()
     avg_cross = df_out["crossings"].mean()
-    avg_p40   = df_out["p40"].mean()
-    avg_p30   = df_out["p30"].mean()
-    avg_p20   = df_out["p20"].mean()
-    avg_p10   = df_out["p10"].mean()
-    avg_bt40  = df_out["bt40"].mean()
-    avg_bt30  = df_out["bt30"].mean()
-    avg_bt20  = df_out["bt20"].mean()
-    avg_bt10  = df_out["bt10"].mean()
     print(
         f"{'MOYENNE GLOBALE':<{col_w['symbol']}}"
         f"{'':>{col_w['bars']}}"
@@ -368,14 +246,6 @@ def main():
         f"{avg_fee:>{col_w['fee_pct'] - 1}.4f}%"
         f"{avg_net:>+{col_w['net_abs'] - 1}.6f}%"
         f"{avg_cross:>{col_w['crossings'] - 1}.1f}"
-        f"{avg_p40:>{col_w['p40'] - 1}.4f}%"
-        f"{avg_p30:>{col_w['p30'] - 1}.4f}%"
-        f"{avg_p20:>{col_w['p20'] - 1}.4f}%"
-        f"{avg_p10:>{col_w['p10'] - 1}.4f}%"
-        f"{avg_bt40:>+{col_w['bt40'] - 1}.2f}%"
-        f"{avg_bt30:>+{col_w['bt30'] - 1}.2f}%"
-        f"{avg_bt20:>+{col_w['bt20'] - 1}.2f}%"
-        f"{avg_bt10:>+{col_w['bt10'] - 1}.2f}%"
     )
     print()
 

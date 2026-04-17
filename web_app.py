@@ -27,25 +27,15 @@ from sma_slope_analysis import (
 app = Flask(__name__)
 
 TIMEFRAMES = ["1m", "5m", "15m", "30m", "1H", "4H", "1D"]
-SORT_CHOICES = ["symbol", "avg", "positive", "negative", "abs_avg", "pct_up",
-                "crossings", "p40", "p30", "p20", "p10",
-                "bt40", "bt30", "bt20", "bt10"]
+SORT_CHOICES = ["symbol", "avg", "positive", "negative", "abs_avg", "pct_up", "crossings"]
 SORT_LABELS = {
-    "symbol":   "Symbole",
-    "avg":      "Moy. générale",
-    "positive": "Moy. positive",
-    "negative": "Moy. négative",
-    "abs_avg":  "Moy. absolue",
-    "pct_up":   "% haussier",
+    "symbol":    "Symbole",
+    "avg":       "Moy. générale",
+    "positive":  "Moy. positive",
+    "negative":  "Moy. négative",
+    "abs_avg":   "Moy. absolue",
+    "pct_up":    "% haussier",
     "crossings": "Croisements",
-    "p40": "Top 40%",
-    "p30": "Top 30%",
-    "p20": "Top 20%",
-    "p10": "Top 10%",
-    "bt40": "BT top40%",
-    "bt30": "BT top30%",
-    "bt20": "BT top20%",
-    "bt10": "BT top10%",
 }
 
 
@@ -93,9 +83,7 @@ def index():
 
     summary = {}
     if rows:
-        for key in ("avg", "positive", "negative", "abs_avg", "pct_up",
-                    "crossings", "p40", "p30", "p20", "p10",
-                    "bt40", "bt30", "bt20", "bt10"):
+        for key in ("avg", "positive", "negative", "abs_avg", "pct_up", "crossings"):
             summary[key] = sum(r[key] for r in rows) / len(rows)
 
     return render_template(
