@@ -147,8 +147,7 @@
     .th-group-total  { color: #94a3b8; background: #1a1f30; }
     .th-group-long   { color: #4ade80; background: #0d1f17; }
     .th-group-short  { color: #f87171; background: #1f0d0d; }
-    td.long  { color: #86efac; }
-    td.short { color: #fca5a5; }
+
     tbody tr { border-top: 1px solid #1e2130; transition: background 0.1s; }
     tbody tr:hover { background: #1a1f30; }
     td {
@@ -166,6 +165,57 @@
       font-weight: 700;
     }
     .no-data { color: #64748b; font-style: italic; padding: 1.5rem 0; }
+
+    /* ── Clickable BT cells ─────────────────────────────────── */
+    td.bt-cell { cursor: pointer; }
+    td.bt-cell:hover { filter: brightness(1.4); text-decoration: underline dotted; }
+
+    /* ── Modal overlay ──────────────────────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.65);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: #1e2130;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      padding: 1.5rem;
+      width: min(860px, 95vw);
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .modal-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .modal-title {
+      font-size: 0.9rem;
+      color: #94a3b8;
+      line-height: 1.5;
+    }
+    .modal-title strong { color: #e2e8f0; font-size: 1rem; }
+    .modal-close {
+      flex-shrink: 0;
+      background: none;
+      border: none;
+      color: #64748b;
+      font-size: 1.4rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0 0.25rem;
+    }
+    .modal-close:hover { color: #e2e8f0; }
+    canvas#equityChart { width: 100%; height: 300px; display: block; }
   </style>
 </head>
 <body>
@@ -244,18 +294,18 @@
                     <td>{{ row.period }}</td>
                     <td>{{ row.bars }}</td>
                     <td>{{ row.crossings }}</td>
-                    <td class="{% if row.bt40 == max40 %}best{% elif row.bt40 > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt40 }}%</td>
-                    <td class="{% if row.bt30 == max30 %}best{% elif row.bt30 > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt30 }}%</td>
-                    <td class="{% if row.bt20 == max20 %}best{% elif row.bt20 > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt20 }}%</td>
-                    <td class="{% if row.bt10 == max10 %}best{% elif row.bt10 > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt10 }}%</td>
-                    <td class="{% if row.bt40_long == max40l %}best{% elif row.bt40_long > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt40_long }}%</td>
-                    <td class="{% if row.bt30_long == max30l %}best{% elif row.bt30_long > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt30_long }}%</td>
-                    <td class="{% if row.bt20_long == max20l %}best{% elif row.bt20_long > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt20_long }}%</td>
-                    <td class="{% if row.bt10_long == max10l %}best{% elif row.bt10_long > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt10_long }}%</td>
-                    <td class="{% if row.bt40_short == max40s %}best{% elif row.bt40_short > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt40_short }}%</td>
-                    <td class="{% if row.bt30_short == max30s %}best{% elif row.bt30_short > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt30_short }}%</td>
-                    <td class="{% if row.bt20_short == max20s %}best{% elif row.bt20_short > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt20_short }}%</td>
-                    <td class="{% if row.bt10_short == max10s %}best{% elif row.bt10_short > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt10_short }}%</td>
+                    <td class="bt-cell {% if row.bt40 == max40 %}best{% elif row.bt40 > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt40">{{ '%+.2f' % row.bt40 }}%</td>
+                    <td class="bt-cell {% if row.bt30 == max30 %}best{% elif row.bt30 > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt30">{{ '%+.2f' % row.bt30 }}%</td>
+                    <td class="bt-cell {% if row.bt20 == max20 %}best{% elif row.bt20 > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt20">{{ '%+.2f' % row.bt20 }}%</td>
+                    <td class="bt-cell {% if row.bt10 == max10 %}best{% elif row.bt10 > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt10">{{ '%+.2f' % row.bt10 }}%</td>
+                    <td class="bt-cell {% if row.bt40_long == max40l %}best{% elif row.bt40_long > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt40_long">{{ '%+.2f' % row.bt40_long }}%</td>
+                    <td class="bt-cell {% if row.bt30_long == max30l %}best{% elif row.bt30_long > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt30_long">{{ '%+.2f' % row.bt30_long }}%</td>
+                    <td class="bt-cell {% if row.bt20_long == max20l %}best{% elif row.bt20_long > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt20_long">{{ '%+.2f' % row.bt20_long }}%</td>
+                    <td class="bt-cell {% if row.bt10_long == max10l %}best{% elif row.bt10_long > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt10_long">{{ '%+.2f' % row.bt10_long }}%</td>
+                    <td class="bt-cell {% if row.bt40_short == max40s %}best{% elif row.bt40_short > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt40_short">{{ '%+.2f' % row.bt40_short }}%</td>
+                    <td class="bt-cell {% if row.bt30_short == max30s %}best{% elif row.bt30_short > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt30_short">{{ '%+.2f' % row.bt30_short }}%</td>
+                    <td class="bt-cell {% if row.bt20_short == max20s %}best{% elif row.bt20_short > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt20_short">{{ '%+.2f' % row.bt20_short }}%</td>
+                    <td class="bt-cell {% if row.bt10_short == max10s %}best{% elif row.bt10_short > 0 %}pos{% else %}neg{% endif %}" data-tf="{{ row.timeframe }}" data-period="{{ row.period }}" data-level="bt10_short">{{ '%+.2f' % row.bt10_short }}%</td>
                   </tr>
                   {% endfor %}
                 </tbody>
@@ -269,9 +319,143 @@
         {% if generated_at %}
           <p class="meta">Données calculées le : <span>{{ generated_at }}</span></p>
         {% endif %}
+
       </section>
 
     </div>
   {% endif %}
+
+  <!-- Modal popup equity curve -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title" id="modalTitle"></div>
+        <button class="modal-close" id="modalClose" aria-label="Fermer">&times;</button>
+      </div>
+      <canvas id="equityChart"></canvas>
+    </div>
+  </div>
+
+<script>
+(function () {
+  const symbol  = {{ selected_symbol | tojson }};
+  const overlay = document.getElementById('modalOverlay');
+  const title   = document.getElementById('modalTitle');
+  const canvas  = document.getElementById('equityChart');
+  document.getElementById('modalClose').addEventListener('click', closeModal);
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) closeModal(); });
+  document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeModal(); });
+  function closeModal() {
+    overlay.classList.remove('open');
+    if (activeCell) { activeCell.style.outline = ''; activeCell = null; }
+  }
+
+  const LEVEL_LABELS = {
+    bt40:'Total BT 40%', bt30:'Total BT 30%', bt20:'Total BT 20%', bt10:'Total BT 10%',
+    bt40_long:'Long BT 40%', bt30_long:'Long BT 30%', bt20_long:'Long BT 20%', bt10_long:'Long BT 10%',
+    bt40_short:'Short BT 40%', bt30_short:'Short BT 30%', bt20_short:'Short BT 20%', bt10_short:'Short BT 10%',
+  };
+
+  let activeCell = null;
+
+  document.querySelectorAll('td.bt-cell').forEach(td => {
+    td.addEventListener('click', function () {
+      if (activeCell) activeCell.style.outline = '';
+      activeCell = this;
+      this.style.outline = '2px solid #38bdf8';
+
+      const tf     = this.dataset.tf;
+      const period = this.dataset.period;
+      const level  = this.dataset.level;
+
+      title.innerHTML = `<strong>${symbol}</strong> — ${LEVEL_LABELS[level] || level}<br>TF ${tf} / Période ${period}`;
+      overlay.classList.add('open');
+
+      fetch(`/api/equity?symbol=${encodeURIComponent(symbol)}&timeframe=${tf}&period=${period}&level=${level}`)
+        .then(r => r.json())
+        .then(data => drawChart(data.equity || []))
+        .catch(() => drawChart([]));
+    });
+  });
+
+  function drawChart(equity) {
+    const dpr = window.devicePixelRatio || 1;
+    const W   = canvas.parentElement.clientWidth - 40;
+    const H   = 260;
+    canvas.width  = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, W, H);
+
+    if (!equity.length) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = '14px Segoe UI';
+      ctx.fillText('Aucune donnée', W / 2 - 50, H / 2);
+      return;
+    }
+
+    const pad = { top: 16, right: 16, bottom: 28, left: 52 };
+    const cw  = W - pad.left - pad.right;
+    const ch  = H - pad.top  - pad.bottom;
+
+    const minV = Math.min(0, ...equity);
+    const maxV = Math.max(0, ...equity);
+    const range = maxV - minV || 1;
+
+    const xOf = i  => pad.left + (i / (equity.length - 1 || 1)) * cw;
+    const yOf = v  => pad.top  + (1 - (v - minV) / range) * ch;
+
+    // Zero line
+    ctx.strokeStyle = '#2d3148';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, yOf(0));
+    ctx.lineTo(pad.left + cw, yOf(0));
+    ctx.stroke();
+
+    // Grid lines + y labels
+    ctx.fillStyle  = '#64748b';
+    ctx.font       = '11px Segoe UI';
+    ctx.textAlign  = 'right';
+    const steps = 5;
+    for (let i = 0; i <= steps; i++) {
+      const v = minV + (range / steps) * i;
+      const y = yOf(v);
+      ctx.strokeStyle = '#1a1f30';
+      ctx.lineWidth   = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad.left, y);
+      ctx.lineTo(pad.left + cw, y);
+      ctx.stroke();
+      ctx.fillText((v >= 0 ? '+' : '') + v.toFixed(1) + '%', pad.left - 6, y + 4);
+    }
+
+    // Equity line
+    const positive = equity[equity.length - 1] >= 0;
+    ctx.strokeStyle = positive ? '#4ade80' : '#f87171';
+    ctx.lineWidth   = 2;
+    ctx.lineJoin    = 'round';
+    ctx.beginPath();
+    equity.forEach((v, i) => {
+      if (i === 0) ctx.moveTo(xOf(i), yOf(v));
+      else         ctx.lineTo(xOf(i), yOf(v));
+    });
+    ctx.stroke();
+
+    // Fill under curve
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle   = positive ? '#4ade80' : '#f87171';
+    ctx.lineTo(xOf(equity.length - 1), yOf(0));
+    ctx.lineTo(xOf(0), yOf(0));
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+})();
+</script>
 </body>
 </html>
