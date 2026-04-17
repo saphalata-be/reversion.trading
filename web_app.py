@@ -10,6 +10,8 @@ Usage:
 """
 
 import argparse
+import glob
+import json
 import os
 
 from flask import Flask, render_template, request
@@ -38,6 +40,18 @@ SORT_LABELS = {
     "crossings": "Croisements",
 }
 
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Output")
+
+
+def load_latest_strategy_results():
+    """Charge le dernier fichier JSON de résultats de stratégie."""
+    if not os.path.isdir(OUTPUT_DIR):
+        return None
+    files = sorted(glob.glob(os.path.join(OUTPUT_DIR, "strategy_*.json")), reverse=True)
+    if not files:
+        return None
+    with open(files[0], "r", encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 @app.route("/")
@@ -97,6 +111,45 @@ def index():
         summary=summary,
         data_dir=DEFAULT_DIR,
         error=error,
+    )
+
+
+_TF_ORDER = {"1m": 0, "5m": 1, "15m": 2, "30m": 3, "1H": 4, "4H": 5, "1D": 6}
+
+
+@app.route("/strategy")
+def strategy():
+    selected_symbol = request.args.get("symbol", "")
+    data = load_latest_strategy_results()
+
+    symbols = []
+    rows_by_symbol: dict = {}
+    generated_at = None
+
+    if data:
+        generated_at = data.get("generated_at")
+        for row in data["rows"]:
+            sym = row["symbol"]
+            if sym not in rows_by_symbol:
+                rows_by_symbol[sym] = []
+            rows_by_symbol[sym].append(row)
+        symbols = sorted(rows_by_symbol.keys())
+
+    if not selected_symbol and symbols:
+        selected_symbol = symbols[0]
+
+    selected_rows = sorted(
+        rows_by_symbol.get(selected_symbol, []),
+        key=lambda r: (_TF_ORDER.get(r["timeframe"], 99), r["period"]),
+    )
+
+    return render_template(
+        "strategy.html",
+        symbols=symbols,
+        selected_symbol=selected_symbol,
+        rows=selected_rows,
+        generated_at=generated_at,
+        has_data=bool(data),
     )
 
 

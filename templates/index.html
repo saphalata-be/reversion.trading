@@ -142,10 +142,34 @@
     /* Summary row */
     tfoot tr { border-top: 2px solid #2d3148; background: #1e2130; }
     tfoot td { padding: 0.65rem 1rem; font-weight: 700; color: #94a3b8; }
+
+    /* ── Tabs ─────────────────────────────────────────────────── */
+    .tabs {
+      display: flex;
+      margin-bottom: 1.5rem;
+      border-bottom: 2px solid #2d3148;
+    }
+    .tab {
+      padding: 0.6rem 1.5rem;
+      color: #64748b;
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: color 0.15s;
+    }
+    .tab:hover { color: #94a3b8; }
+    .tab.active { color: #38bdf8; border-bottom-color: #38bdf8; }
   </style>
 </head>
 <body>
   <h1>SMA Slope Analysis</h1>
+
+  <nav class="tabs">
+    <a href="/" class="tab active">Analyse</a>
+    <a href="/strategy" class="tab">Stratégie Percentile</a>
+  </nav>
 
   <form class="params" method="get" action="/">
     <div class="field">

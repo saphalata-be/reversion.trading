@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stratégie Percentile — SMA</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #38bdf8;
+      margin-bottom: 1.5rem;
+      letter-spacing: 0.02em;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #e2e8f0;
+      margin-bottom: 1rem;
+    }
+
+    /* ── Tabs ───────────────────────────────────────────────── */
+    .tabs {
+      display: flex;
+      margin-bottom: 1.5rem;
+      border-bottom: 2px solid #2d3148;
+    }
+    .tab {
+      padding: 0.6rem 1.5rem;
+      color: #64748b;
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: color 0.15s;
+    }
+    .tab:hover { color: #94a3b8; }
+    .tab.active { color: #38bdf8; border-bottom-color: #38bdf8; }
+
+    /* ── Error ──────────────────────────────────────────────── */
+    .error {
+      color: #f87171;
+      background: #1e1a1a;
+      border: 1px solid #7f1d1d;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────── */
+    .strategy-layout {
+      display: flex;
+      gap: 1.5rem;
+      align-items: flex-start;
+    }
+
+    /* ── Symbol sidebar ─────────────────────────────────────── */
+    .symbol-list {
+      width: 155px;
+      flex-shrink: 0;
+      background: #1e2130;
+      border: 1px solid #2d3148;
+      border-radius: 10px;
+      overflow-y: auto;
+      max-height: calc(100vh - 180px);
+      position: sticky;
+      top: 1rem;
+    }
+    .symbol-list-header {
+      padding: 0.6rem 1rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid #2d3148;
+    }
+    .symbol-item {
+      display: block;
+      padding: 0.45rem 1rem;
+      color: #94a3b8;
+      text-decoration: none;
+      border-bottom: 1px solid #1a1f30;
+      font-size: 0.88rem;
+      transition: background 0.1s, color 0.1s;
+    }
+    .symbol-item:last-child { border-bottom: none; }
+    .symbol-item:hover { background: #1a1f30; color: #e2e8f0; }
+    .symbol-item.active { background: #0ea5e9; color: #fff; font-weight: 600; }
+
+    /* ── Detail panel ───────────────────────────────────────── */
+    .symbol-detail { flex: 1; min-width: 0; }
+
+    /* ── Meta ───────────────────────────────────────────────── */
+    .meta {
+      font-size: 0.85rem;
+      color: #64748b;
+      margin-top: 1.25rem;
+    }
+    .meta span { color: #94a3b8; font-weight: 600; }
+
+    /* ── Table ──────────────────────────────────────────────── */
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 10px;
+      border: 1px solid #2d3148;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    thead tr { background: #1e2130; }
+    th {
+      padding: 0.7rem 1rem;
+      text-align: right;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+    th:first-child { text-align: left; }
+    tbody tr { border-top: 1px solid #1e2130; transition: background 0.1s; }
+    tbody tr:hover { background: #1a1f30; }
+    td {
+      padding: 0.55rem 1rem;
+      text-align: right;
+      white-space: nowrap;
+      color: #cbd5e1;
+    }
+    td:first-child { text-align: left; font-weight: 600; color: #e2e8f0; }
+    .pos { color: #4ade80; }
+    .neg { color: #f87171; }
+    .best {
+      background: rgba(56, 189, 248, 0.12);
+      color: #38bdf8 !important;
+      font-weight: 700;
+    }
+    .no-data { color: #64748b; font-style: italic; padding: 1.5rem 0; }
+  </style>
+</head>
+<body>
+  <h1>SMA Slope Analysis</h1>
+
+  <nav class="tabs">
+    <a href="/" class="tab">Analyse</a>
+    <a href="/strategy" class="tab active">Stratégie Percentile</a>
+  </nav>
+
+  {% if not has_data %}
+    <div class="error">
+      Aucune donnée disponible. Lancez <strong>sma_grid_search.py</strong>
+      pour générer les résultats de backtest dans le répertoire <strong>Output/</strong>.
+    </div>
+  {% else %}
+    <div class="strategy-layout">
+
+      <aside class="symbol-list">
+        <div class="symbol-list-header">Symboles</div>
+        {% for sym in symbols %}
+          <a href="/strategy?symbol={{ sym }}"
+             class="symbol-item{% if sym == selected_symbol %} active{% endif %}">
+            {{ sym }}
+          </a>
+        {% endfor %}
+      </aside>
+
+      <section class="symbol-detail">
+        {% if selected_symbol %}
+          <h2>{{ selected_symbol }}</h2>
+          {% if rows %}
+            {%- set max40 = rows | map(attribute='bt40') | max %}
+            {%- set max30 = rows | map(attribute='bt30') | max %}
+            {%- set max20 = rows | map(attribute='bt20') | max %}
+            {%- set max10 = rows | map(attribute='bt10') | max %}
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>TF</th>
+                    <th>Période</th>
+                    <th>Bars</th>
+                    <th>Croisements</th>
+                    <th>BT 40%</th>
+                    <th>BT 30%</th>
+                    <th>BT 20%</th>
+                    <th>BT 10%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in rows %}
+                  <tr>
+                    <td>{{ row.timeframe }}</td>
+                    <td>{{ row.period }}</td>
+                    <td>{{ row.bars }}</td>
+                    <td>{{ row.crossings }}</td>
+                    <td class="{% if row.bt40 == max40 %}best{% elif row.bt40 > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt40 }}%</td>
+                    <td class="{% if row.bt30 == max30 %}best{% elif row.bt30 > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt30 }}%</td>
+                    <td class="{% if row.bt20 == max20 %}best{% elif row.bt20 > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt20 }}%</td>
+                    <td class="{% if row.bt10 == max10 %}best{% elif row.bt10 > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt10 }}%</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p class="no-data">Aucun résultat pour ce symbole.</p>
+          {% endif %}
+        {% endif %}
+
+        {% if generated_at %}
+          <p class="meta">Données calculées le : <span>{{ generated_at }}</span></p>
+        {% endif %}
+      </section>
+
+    </div>
+  {% endif %}
+</body>
+</html>

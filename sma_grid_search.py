@@ -8,10 +8,11 @@ Usage:
     python sma_grid_search.py [--dir DIR] [--out OUT]
 
 Timeframes : 1H, 4H, 1D
-Périodes   : 25, 50, 75, 100, 125, 150, 200
+Périodes   : 20, 50, 100, 150, 200
 """
 
 import argparse
+import json
 import os
 import sys
 from datetime import datetime
@@ -30,33 +31,31 @@ from sma_slope_analysis import (
     analyse_symbol,
     DEFAULT_FEE_PCT,
 )
+from strategy_percentile import backtest_strategy
 
 TIMEFRAMES = ["1H", "4H", "1D"]
-PERIODS    = [25, 50, 75, 100, 125, 150, 200]
+PERIODS    = [20, 50, 100, 150, 200]
 
 METRICS = [
     "bars", "avg", "positive", "negative", "abs_avg", "pct_up",
     "fee_pct", "net_abs", "crossings",
-    "p40", "p30", "p20", "p10",
     "bt40", "bt30", "bt20", "bt10",
 ]
 
 # ─── Colonnes affichées dans le rapport texte (plus compact) ─────────────────
 TEXT_COLS = ["timeframe", "period", "bars", "bt40", "bt30", "bt20", "bt10",
-             "crossings", "p40", "p30", "p20", "p10", "abs_avg", "pct_up"]
+             "crossings", "abs_avg", "pct_up"]
 
 COL_W = {
     "timeframe": 10, "period": 8, "bars": 7,
     "bt40": 9, "bt30": 9, "bt20": 9, "bt10": 9,
-    "crossings": 11, "p40": 9, "p30": 9, "p20": 9, "p10": 9,
-    "abs_avg": 11, "pct_up": 9,
+    "crossings": 11, "abs_avg": 11, "pct_up": 9,
 }
 
 HEADER_LABELS = {
     "timeframe": "TF", "period": "Période", "bars": "Bars",
     "bt40": "BT 40%", "bt30": "BT 30%", "bt20": "BT 20%", "bt10": "BT 10%",
-    "crossings": "Croisements", "p40": "P60", "p30": "P70", "p20": "P80", "p10": "P90",
-    "abs_avg": "Moy. abs.", "pct_up": "% haussier",
+    "crossings": "Croisements", "abs_avg": "Moy. abs.", "pct_up": "% haussier",
 }
 
 
@@ -67,8 +66,6 @@ def fmt_val(col: str, val) -> str:
         return f"{val:.4f}%"
     if col in ("pct_up",):
         return f"{val:.1f}%"
-    if col in ("p40", "p30", "p20", "p10"):
-        return f"{val:.4f}%"
     if col == "bars":
         return str(int(val))
     if col == "crossings":
@@ -107,6 +104,12 @@ def run_grid(data_dir: str) -> pd.DataFrame:
                 continue
             stats["fee_pct"] = fee
             stats["net_abs"] = round(stats["abs_avg"] - fee, 6)
+            try:
+                df_sym = pd.read_csv(filepath, parse_dates=["Datetime"])
+                bt = backtest_strategy(df_sym, period, fee)
+                stats.update(bt)
+            except Exception:
+                stats.update({"bt40": 0.0, "bt30": 0.0, "bt20": 0.0, "bt10": 0.0})
             rows.append({
                 "symbol":    symbol,
                 "timeframe": tf,
@@ -178,6 +181,33 @@ def write_text_report(df: pd.DataFrame, path: str) -> None:
     print(f"Rapport texte sauvegardé : {path}")
 
 
+def write_json_output(df: pd.DataFrame, path: str) -> None:
+    """Sauvegarde les résultats en JSON pour l'interface web (stratégie percentile)."""
+    rows = []
+    for _, row in df.iterrows():
+        entry = {
+            "symbol":    str(row["symbol"]),
+            "timeframe": str(row["timeframe"]),
+            "period":    int(row["period"]),
+            "bars":      int(row["bars"]),
+            "crossings": int(row.get("crossings", 0)),
+            "abs_avg":   round(float(row["abs_avg"]), 6),
+            "pct_up":    round(float(row["pct_up"]), 1),
+        }
+        for col in ("bt40", "bt30", "bt20", "bt10"):
+            entry[col] = round(float(row.get(col, 0.0)), 2)
+        rows.append(entry)
+    data = {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "timeframes":   TIMEFRAMES,
+        "periods":      PERIODS,
+        "rows":         rows,
+    }
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+    print(f"JSON sauvegardé : {path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Grid search SMA sur TF × période")
     parser.add_argument("--dir", default=DEFAULT_DIR,
@@ -209,6 +239,9 @@ def main():
 
     write_csv(df, base + ".csv")
     write_text_report(df, base + ".txt")
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Output")
+    os.makedirs(output_dir, exist_ok=True)
+    write_json_output(df, os.path.join(output_dir, f"strategy_{timestamp}.json"))
 
     # Résumé global : top configs par BT10 moyen sur tous les symboles
     print("\n── Top 10 configurations (BT top10% moyen toutes paires) ──────────────")
