@@ -134,6 +134,21 @@
       white-space: nowrap;
     }
     th:first-child { text-align: left; }
+    /* group header row */
+    .th-group {
+      padding: 0.35rem 1rem;
+      text-align: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border-bottom: 1px solid #2d3148;
+    }
+    .th-group-total  { color: #94a3b8; background: #1a1f30; }
+    .th-group-long   { color: #4ade80; background: #0d1f17; }
+    .th-group-short  { color: #f87171; background: #1f0d0d; }
+    td.long  { color: #86efac; }
+    td.short { color: #fca5a5; }
     tbody tr { border-top: 1px solid #1e2130; transition: background 0.1s; }
     tbody tr:hover { background: #1a1f30; }
     td {
@@ -187,14 +202,35 @@
             {%- set max30 = rows | map(attribute='bt30') | max %}
             {%- set max20 = rows | map(attribute='bt20') | max %}
             {%- set max10 = rows | map(attribute='bt10') | max %}
+            {%- set max40l = rows | map(attribute='bt40_long') | max %}
+            {%- set max30l = rows | map(attribute='bt30_long') | max %}
+            {%- set max20l = rows | map(attribute='bt20_long') | max %}
+            {%- set max10l = rows | map(attribute='bt10_long') | max %}
+            {%- set max40s = rows | map(attribute='bt40_short') | max %}
+            {%- set max30s = rows | map(attribute='bt30_short') | max %}
+            {%- set max20s = rows | map(attribute='bt20_short') | max %}
+            {%- set max10s = rows | map(attribute='bt10_short') | max %}
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>TF</th>
-                    <th>Période</th>
-                    <th>Bars</th>
-                    <th>Croisements</th>
+                    <th rowspan="2">TF</th>
+                    <th rowspan="2">Période</th>
+                    <th rowspan="2">Bars</th>
+                    <th rowspan="2">Croisements</th>
+                    <th colspan="4" class="th-group th-group-total">Total</th>
+                    <th colspan="4" class="th-group th-group-long">Long uniquement</th>
+                    <th colspan="4" class="th-group th-group-short">Short uniquement</th>
+                  </tr>
+                  <tr>
+                    <th>BT 40%</th>
+                    <th>BT 30%</th>
+                    <th>BT 20%</th>
+                    <th>BT 10%</th>
+                    <th>BT 40%</th>
+                    <th>BT 30%</th>
+                    <th>BT 20%</th>
+                    <th>BT 10%</th>
                     <th>BT 40%</th>
                     <th>BT 30%</th>
                     <th>BT 20%</th>
@@ -212,6 +248,14 @@
                     <td class="{% if row.bt30 == max30 %}best{% elif row.bt30 > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt30 }}%</td>
                     <td class="{% if row.bt20 == max20 %}best{% elif row.bt20 > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt20 }}%</td>
                     <td class="{% if row.bt10 == max10 %}best{% elif row.bt10 > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt10 }}%</td>
+                    <td class="{% if row.bt40_long == max40l %}best{% elif row.bt40_long > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt40_long }}%</td>
+                    <td class="{% if row.bt30_long == max30l %}best{% elif row.bt30_long > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt30_long }}%</td>
+                    <td class="{% if row.bt20_long == max20l %}best{% elif row.bt20_long > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt20_long }}%</td>
+                    <td class="{% if row.bt10_long == max10l %}best{% elif row.bt10_long > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt10_long }}%</td>
+                    <td class="{% if row.bt40_short == max40s %}best{% elif row.bt40_short > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt40_short }}%</td>
+                    <td class="{% if row.bt30_short == max30s %}best{% elif row.bt30_short > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt30_short }}%</td>
+                    <td class="{% if row.bt20_short == max20s %}best{% elif row.bt20_short > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt20_short }}%</td>
+                    <td class="{% if row.bt10_short == max10s %}best{% elif row.bt10_short > 0 %}pos{% else %}neg{% endif %}">{{ '%+.2f' % row.bt10_short }}%</td>
                   </tr>
                   {% endfor %}
                 </tbody>

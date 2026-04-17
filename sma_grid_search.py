@@ -40,6 +40,8 @@ METRICS = [
     "bars", "avg", "positive", "negative", "abs_avg", "pct_up",
     "fee_pct", "net_abs", "crossings",
     "bt40", "bt30", "bt20", "bt10",
+    "bt40_long", "bt30_long", "bt20_long", "bt10_long",
+    "bt40_short", "bt30_short", "bt20_short", "bt10_short",
 ]
 
 # ─── Colonnes affichées dans le rapport texte (plus compact) ─────────────────
@@ -109,7 +111,11 @@ def run_grid(data_dir: str) -> pd.DataFrame:
                 bt = backtest_strategy(df_sym, period, fee)
                 stats.update(bt)
             except Exception:
-                stats.update({"bt40": 0.0, "bt30": 0.0, "bt20": 0.0, "bt10": 0.0})
+                stats.update({
+                    "bt40": 0.0, "bt30": 0.0, "bt20": 0.0, "bt10": 0.0,
+                    "bt40_long": 0.0, "bt30_long": 0.0, "bt20_long": 0.0, "bt10_long": 0.0,
+                    "bt40_short": 0.0, "bt30_short": 0.0, "bt20_short": 0.0, "bt10_short": 0.0,
+                })
             rows.append({
                 "symbol":    symbol,
                 "timeframe": tf,
@@ -194,7 +200,9 @@ def write_json_output(df: pd.DataFrame, path: str) -> None:
             "abs_avg":   round(float(row["abs_avg"]), 6),
             "pct_up":    round(float(row["pct_up"]), 1),
         }
-        for col in ("bt40", "bt30", "bt20", "bt10"):
+        for col in ("bt40", "bt30", "bt20", "bt10",
+                    "bt40_long", "bt30_long", "bt20_long", "bt10_long",
+                    "bt40_short", "bt30_short", "bt20_short", "bt10_short"):
             entry[col] = round(float(row.get(col, 0.0)), 2)
         rows.append(entry)
     data = {

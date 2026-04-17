@@ -57,7 +57,11 @@ def backtest_strategy(
     """
     n = len(df)
     if n < period + 2:
-        return {"bt40": 0.0, "bt30": 0.0, "bt20": 0.0, "bt10": 0.0}
+        return {
+            "bt40": 0.0, "bt30": 0.0, "bt20": 0.0, "bt10": 0.0,
+            "bt40_long": 0.0, "bt30_long": 0.0, "bt20_long": 0.0, "bt10_long": 0.0,
+            "bt40_short": 0.0, "bt30_short": 0.0, "bt20_short": 0.0, "bt10_short": 0.0,
+        }
 
     required_cols = {"Datetime", "Open", "Close"}
     missing = required_cols - set(df.columns)
@@ -72,7 +76,11 @@ def backtest_strategy(
 
     valid_mask = ~np.isnan(sma_arr)
     if not valid_mask.any():
-        return {"bt40": 0.0, "bt30": 0.0, "bt20": 0.0, "bt10": 0.0}
+        return {
+            "bt40": 0.0, "bt30": 0.0, "bt20": 0.0, "bt10": 0.0,
+            "bt40_long": 0.0, "bt30_long": 0.0, "bt20_long": 0.0, "bt10_long": 0.0,
+            "bt40_short": 0.0, "bt30_short": 0.0, "bt20_short": 0.0, "bt10_short": 0.0,
+        }
 
     first_valid = int(np.argmax(valid_mask))
 
@@ -94,6 +102,8 @@ def backtest_strategy(
 
     # PnL cumulé par niveau : bt40, bt30, bt20, bt10
     pnl = [0.0, 0.0, 0.0, 0.0]
+    pnl_long = [0.0, 0.0, 0.0, 0.0]   # trades longs uniquement (run sous la SMA)
+    pnl_short = [0.0, 0.0, 0.0, 0.0]  # trades shorts uniquement (run au-dessus SMA)
     pct_ranks = [60, 70, 80, 90]
     thresholds: list[float | None] = [None, None, None, None]
 
@@ -180,7 +190,12 @@ def backtest_strategy(
                         # run en-dessous SMA => trade long
                         raw = (exit_price - entry) / entry * 100
 
-                    pnl[k] += raw - 2 * fee_pct
+                    net = raw - 2 * fee_pct
+                    pnl[k] += net
+                    if td > 0:
+                        pnl_short[k] += net
+                    else:
+                        pnl_long[k] += net
                     in_trade[k] = False
         else:
             for k in range(4):
@@ -205,12 +220,25 @@ def backtest_strategy(
                 else:
                     raw = (final_close - entry) / entry * 100
 
-                pnl[k] += raw - 2 * fee_pct
+                net = raw - 2 * fee_pct
+                pnl[k] += net
+                if td > 0:
+                    pnl_short[k] += net
+                else:
+                    pnl_long[k] += net
                 in_trade[k] = False
 
     return {
-        "bt40": round(pnl[0], 2),
-        "bt30": round(pnl[1], 2),
-        "bt20": round(pnl[2], 2),
-        "bt10": round(pnl[3], 2),
+        "bt40":  round(pnl[0], 2),
+        "bt30":  round(pnl[1], 2),
+        "bt20":  round(pnl[2], 2),
+        "bt10":  round(pnl[3], 2),
+        "bt40_long":  round(pnl_long[0], 2),
+        "bt30_long":  round(pnl_long[1], 2),
+        "bt20_long":  round(pnl_long[2], 2),
+        "bt10_long":  round(pnl_long[3], 2),
+        "bt40_short": round(pnl_short[0], 2),
+        "bt30_short": round(pnl_short[1], 2),
+        "bt20_short": round(pnl_short[2], 2),
+        "bt10_short": round(pnl_short[3], 2),
     }

@@ -126,9 +126,16 @@ def strategy():
     rows_by_symbol: dict = {}
     generated_at = None
 
+    _long_short_keys = [
+        "bt40_long", "bt30_long", "bt20_long", "bt10_long",
+        "bt40_short", "bt30_short", "bt20_short", "bt10_short",
+    ]
     if data:
         generated_at = data.get("generated_at")
         for row in data["rows"]:
+            # Rétro-compatibilité : fichiers antérieurs sans colonnes long/short
+            for k in _long_short_keys:
+                row.setdefault(k, 0.0)
             sym = row["symbol"]
             if sym not in rows_by_symbol:
                 rows_by_symbol[sym] = []
